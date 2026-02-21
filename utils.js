@@ -155,8 +155,11 @@ function applyCalendarDefaults(data) {
     if (startDay === endDay && (startWasDateOnly || data.endDate.endsWith("T000000"))) {
       // Same-day event with no real time — default to start + 1 hour
       data.endDate = addHoursToCalDate(data.startDate, 1);
+    } else if (startDay !== endDay && data.endDate.endsWith("T000000")) {
+      // Multi-day event where end had no time — match the start time
+      data.endDate = data.endDate.slice(0, 9) + data.startDate.slice(9);
     }
-    // Different-day end is preserved (multi-day event)
+    // Different-day end with a real time is preserved as-is
   }
 
   return data;
