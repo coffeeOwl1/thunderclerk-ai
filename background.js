@@ -243,6 +243,14 @@ browser.menus.onClicked.addListener(async (info, tab) => {
     if (taskDescription) parsed.description = taskDescription;
   }
 
+  // iCal all-day events use an exclusive DTEND (the day *after* the last
+  // visible day). Advance endDate by 1 day for multi-day all-day events so
+  // Thunderbird displays the correct last day.  Single-day events
+  // (startDate === endDate) are left alone — Thunderbird handles those correctly.
+  if (isCalendar && parsed.forceAllDay && parsed.endDate && parsed.endDate !== parsed.startDate) {
+    parsed.endDate = addHoursToCalDate(parsed.endDate, 24);
+  }
+
   try {
     if (isCalendar) {
       await browser.CalendarTools.openCalendarDialog(parsed);
