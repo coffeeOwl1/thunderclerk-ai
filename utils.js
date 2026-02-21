@@ -226,6 +226,58 @@ function isValidHostUrl(str) {
   }
 }
 
+function buildCalendarPrompt(emailBody, subject, mailDatetime, currentDt, attendeeHints, categories) {
+  const attendeeLine = attendeeHints.length > 0
+    ? `These are the attendees: ${attendeeHints.join(", ")}.`
+    : "";
+  const { instruction: categoryInstruction, jsonLine: categoryJsonLine } = buildCategoryInstruction(categories);
+
+  return `Extract calendar event details from the following email.
+
+Rules for dates and times:
+- Use the format YYYYMMDDTHHMMSS when a specific time is stated in the email (e.g. "3pm", "14:00").
+- Use the format YYYYMMDD (date only, no T or time) when NO time is mentioned. Do NOT invent or guess a time.
+- For multi-day events, set startDate to the first day and endDate to the last day.
+- If an end date or time is not mentioned, omit endDate entirely.
+- If the event is explicitly described as all-day, set forceAllDay to true.
+- For relative dates (e.g. "next Tuesday", "the week of March 2nd"), the email was sent on ${mailDatetime}. If the resolved date is before today (${currentDt}), use ${currentDt} instead.
+${attendeeLine}
+${categoryInstruction}
+Respond with JSON only — no explanation, no markdown fences. Use this structure:
+{
+"startDate": "YYYYMMDD or YYYYMMDDTHHMMSS",
+"endDate": "YYYYMMDD or YYYYMMDDTHHMMSS",
+"summary": "Event title",
+"forceAllDay": false,
+"attendees": ["attendee1@example.com", "attendee2@example.com"]${categoryJsonLine}
+}
+Omit any field you cannot determine from the email.
+Subject: "${subject}"
+Email body: "${emailBody}"`;
+}
+
+function buildTaskPrompt(emailBody, subject, mailDatetime, currentDt, categories) {
+  const { instruction: categoryInstruction, jsonLine: categoryJsonLine } = buildCategoryInstruction(categories);
+
+  return `Extract task details from the following email.
+
+Rules for dates and times:
+- Use the format YYYYMMDDTHHMMSS when a specific time is stated in the email (e.g. "3pm", "14:00").
+- Use the format YYYYMMDD (date only, no T or time) when NO time is mentioned. Do NOT invent or guess a time.
+- For relative dates (e.g. "by next Friday"), the email was sent on ${mailDatetime}. If the resolved date is before today (${currentDt}), use ${currentDt} instead.
+- If no date information is present, omit the date fields entirely.
+${categoryInstruction}
+Respond with JSON only — no explanation, no markdown fences. Use this structure:
+{
+"initialDate": "YYYYMMDD or YYYYMMDDTHHMMSS",
+"dueDate": "YYYYMMDD or YYYYMMDDTHHMMSS",
+"summary": "Task summary"${categoryJsonLine}
+}
+Omit any field you cannot determine from the email.
+Subject: "${subject}"
+Email body: "${emailBody}"`;
+}
+
 // Node.js export (used by Jest tests). Browser environment ignores this block.
 if (typeof module !== "undefined") {
   module.exports = {
@@ -237,6 +289,8 @@ if (typeof module !== "undefined") {
     buildAttendeesHint,
     buildDescription,
     buildCategoryInstruction,
+    buildCalendarPrompt,
+    buildTaskPrompt,
     isValidHostUrl,
     formatDatetime,
     currentDatetime,

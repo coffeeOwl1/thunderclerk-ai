@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "Add emails to Thunderbird calendar or tasks via a local Ollama instance.",
   "scripts": {
-    "test": "jest"
+    "test": "jest --testPathPatterns=tests/utils.test.js",
+    "test:integration": "jest --testPathPatterns=tests/integration.test.js --testTimeout=90000 --verbose"
   },
   "author": "Ryan",
   "license": "GPL-3.0-or-later",
