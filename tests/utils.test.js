@@ -3,6 +3,7 @@
 const {
   normalizeCalDate,
   addHoursToCalDate,
+  advancePastYear,
   applyCalendarDefaults,
   extractJSON,
   buildAttendeesHint,
@@ -434,5 +435,33 @@ describe("currentDatetime", () => {
   test("contains the current year", () => {
     const year = String(new Date().getFullYear());
     expect(currentDatetime()).toContain(year);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// advancePastYear
+// ---------------------------------------------------------------------------
+describe("advancePastYear", () => {
+  test("returns falsy values unchanged", () => {
+    expect(advancePastYear(null,      2026)).toBe(null);
+    expect(advancePastYear(undefined, 2026)).toBe(undefined);
+    expect(advancePastYear("",        2026)).toBe("");
+  });
+
+  test("bumps a training-data year to the reference year", () => {
+    expect(advancePastYear("20230302T000000", 2026)).toBe("20260302T000000");
+    expect(advancePastYear("20220615T140000", 2026)).toBe("20260615T140000");
+  });
+
+  test("leaves the reference year unchanged", () => {
+    expect(advancePastYear("20260302T000000", 2026)).toBe("20260302T000000");
+  });
+
+  test("leaves a future year unchanged", () => {
+    expect(advancePastYear("20270315T090000", 2026)).toBe("20270315T090000");
+  });
+
+  test("works with date-only strings (no T)", () => {
+    expect(advancePastYear("20230302T000000", 2026)).toBe("20260302T000000");
   });
 });

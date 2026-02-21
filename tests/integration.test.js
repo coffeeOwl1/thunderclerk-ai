@@ -11,6 +11,7 @@ const {
   buildCalendarPrompt,
   extractJSON,
   normalizeCalDate,
+  advancePastYear,
   applyCalendarDefaults,
 } = require("../utils.js");
 
@@ -65,6 +66,10 @@ async function extractCalendar(emailBody, subject, opts = {}) {
   if (parsed.startDate) parsed.startDate = normalizeCalDate(parsed.startDate);
   if (parsed.endDate)   parsed.endDate   = normalizeCalDate(parsed.endDate);
   parsed.forceAllDay = !!parsed.forceAllDay;
+  const refYear = parseInt(currentDt.slice(-4), 10);
+  if (parsed.startDate) parsed.startDate = advancePastYear(parsed.startDate, refYear);
+  if (parsed.endDate)   parsed.endDate   = advancePastYear(parsed.endDate,   refYear);
+  if (!parsed.summary)  parsed.summary   = subject;
   applyCalendarDefaults(parsed);
   return parsed;
 }

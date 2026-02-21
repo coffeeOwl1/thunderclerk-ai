@@ -210,6 +210,15 @@ browser.menus.onClicked.addListener(async (info, tab) => {
   // Open dialog
   if (isCalendar) {
     normalizeCalendarData(parsed);
+
+    // If the model returned a training-data year older than the email year, fix it.
+    const refYear = parseInt(currentDt.slice(-4), 10);
+    if (parsed.startDate) parsed.startDate = advancePastYear(parsed.startDate, refYear);
+    if (parsed.endDate)   parsed.endDate   = advancePastYear(parsed.endDate,   refYear);
+
+    // Fall back to email subject when the model omits the summary field.
+    if (!parsed.summary) parsed.summary = subject;
+
     applyCalendarDefaults(parsed);
 
     // Inject description (built from email metadata, not AI-extracted)

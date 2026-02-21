@@ -121,6 +121,16 @@ function addHoursToCalDate(dateStr, hours) {
   return `${y}${mo}${dy}T${h}${m}${s}`;
 }
 
+// If the LLM returned a year before the reference year (e.g. a training-data year like
+// 2022 or 2023 when the email is from 2026), replace the year with referenceYear.
+// Only fires when the year is strictly older; future years and current year are untouched.
+function advancePastYear(dateStr, referenceYear) {
+  if (!dateStr) return dateStr;
+  const y = parseInt(dateStr.slice(0, 4), 10);
+  if (y < referenceYear) return String(referenceYear) + dateStr.slice(4);
+  return dateStr;
+}
+
 // Apply sensible defaults to a calendar event data object after date normalization.
 //
 // Rule: if the email contained NO time (start was date-only → T000000), treat
@@ -286,6 +296,7 @@ if (typeof module !== "undefined") {
     extractTextBody,
     normalizeCalDate,
     addHoursToCalDate,
+    advancePastYear,
     applyCalendarDefaults,
     extractJSON,
     buildAttendeesHint,
