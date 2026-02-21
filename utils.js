@@ -121,45 +121,28 @@ function addHoursToCalDate(dateStr, hours) {
   return `${y}${mo}${dy}T${h}${m}${s}`;
 }
 
-// Apply sensible time defaults to a calendar event data object after
-// date normalization.
+// Apply sensible defaults to a calendar event data object after date normalization.
 //
-// All-day events: endDate is set to startDate if missing (required by schema).
-// Timed events:
-//  - Start time missing (T000000): default to 9:00 AM
-//  - End missing/timeless on the SAME DAY as start: default to start + 1 hour
-//    (catches both missing end and AI end-of-day guesses like T235900)
-//  - End on a DIFFERENT day: preserved as-is (multi-day event)
+// Rule: if the email contained NO time (start was date-only → T000000), treat
+// the event as all-day. This includes single dates and multi-day date ranges.
+// Rule: if the email contained an explicit time, treat as a timed event and
+// default a missing/timeless end to start + 1 hour.
 function applyCalendarDefaults(data) {
   if (!data.startDate) return data;
 
-  if (data.forceAllDay) {
-    // endDate is required by CalendarTools schema even for all-day events
+  const startWasDateOnly = data.startDate.endsWith("T000000");
+
+  if (data.forceAllDay || startWasDateOnly) {
+    // No time in the email → all-day event
+    data.forceAllDay = true;
     if (!data.endDate) data.endDate = data.startDate;
     return data;
   }
 
-  const startWasDateOnly = data.startDate.endsWith("T000000");
-
-  // Default missing start time to 9am
-  if (startWasDateOnly) {
-    data.startDate = data.startDate.slice(0, 9) + "090000";
-  }
-
-  if (!data.endDate) {
-    // End completely missing — always default to start + 1 hour
+  // Start has an explicit time — timed event
+  data.forceAllDay = false;
+  if (!data.endDate || data.endDate.endsWith("T000000")) {
     data.endDate = addHoursToCalDate(data.startDate, 1);
-  } else {
-    const startDay = data.startDate.slice(0, 8);
-    const endDay   = data.endDate.slice(0, 8);
-    if (startDay === endDay && (startWasDateOnly || data.endDate.endsWith("T000000"))) {
-      // Same-day event with no real time — default to start + 1 hour
-      data.endDate = addHoursToCalDate(data.startDate, 1);
-    } else if (startDay !== endDay && data.endDate.endsWith("T000000")) {
-      // Multi-day event where end had no time — match the start time
-      data.endDate = data.endDate.slice(0, 9) + data.startDate.slice(9);
-    }
-    // Different-day end with a real time is preserved as-is
   }
 
   return data;
