@@ -237,7 +237,8 @@ function buildCalendarPrompt(emailBody, subject, mailDatetime, currentDt, attend
 Rules for dates and times:
 - Use the format YYYYMMDDTHHMMSS when a specific time is stated in the email (e.g. "3pm", "14:00").
 - Use the format YYYYMMDD (date only, no T or time) when NO time is mentioned. Do NOT invent or guess a time.
-- For multi-day events, set startDate to the first day and endDate to the last day. Date ranges are inclusive — "March 2nd-March 6th" means endDate is March 6th, not March 5th.
+- For multi-day events, set startDate to the first day and endDate to the last day.
+- Date ranges are ALWAYS inclusive on both ends. The endDate must be the last date explicitly written, never one day before it. Examples: "March 2nd-March 6th" → endDate March 6th. "Monday the 3rd through Friday the 7th" → endDate the 7th. Do NOT subtract a day from the stated end date.
 - If an end date or time is not mentioned, omit endDate entirely.
 - If the event is explicitly described as all-day, set forceAllDay to true.
 - For relative dates (e.g. "next Tuesday", "the week of March 2nd"), the email was sent on ${mailDatetime}. If the resolved date is before today (${currentDt}), use ${currentDt} instead.
