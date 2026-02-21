@@ -71,26 +71,26 @@ function buildCalendarPrompt(emailBody, subject, mailDatetime, currentDt, attend
     : "";
   const { instruction: categoryInstruction, jsonLine: categoryJsonLine } = buildCategoryInstruction(categories);
 
-  return `Extract all relevant details required to generate a calendar event from the following email. The extracted information should include:
-- Event Title
-- Start Date and Time (including timezone, if specified)
-- End Date and Time (including timezone, if specified)
-- Full day (if mentioned)
-- Attendees
-Ensure the data is formatted clearly and consistently so that it can be directly used for creating a calendar event.
-If there are relative date references, consider that the date the email was sent is "${mailDatetime}". Calculate the start date based on this reference. If the calculated start date is earlier than "${currentDt}", recalculate the start date using "${currentDt}" as the base.
-If the duration is not specified, set it to one hour.
+  return `Extract calendar event details from the following email.
+
+Rules for dates and times:
+- Use the format YYYYMMDDTHHMMSS when a specific time is stated in the email (e.g. "3pm", "14:00").
+- Use the format YYYYMMDD (date only, no T or time) when NO time is mentioned. Do NOT invent or guess a time.
+- For multi-day events, set startDate to the first day and endDate to the last day.
+- If an end date or time is not mentioned, omit endDate entirely.
+- If the event is explicitly described as all-day, set forceAllDay to true.
+- For relative dates (e.g. "next Tuesday", "the week of March 2nd"), the email was sent on ${mailDatetime}. If the resolved date is before today (${currentDt}), use ${currentDt} instead.
 ${attendeeLine}
-If you're not able to get one or more of the required information, please respond with an empty string for that field.
 ${categoryInstruction}
-Generate a response in JSON format only. Do not include any additional text or explanations; provide only the JSON. Here is the format to be used:
+Respond with JSON only — no explanation, no markdown fences. Use this structure:
 {
-"startDate": "YYYYMMDDTHHMMSS",
-"endDate": "YYYYMMDDTHHMMSS",
-"summary": "Calendar event summary here",
+"startDate": "YYYYMMDD or YYYYMMDDTHHMMSS",
+"endDate": "YYYYMMDD or YYYYMMDDTHHMMSS",
+"summary": "Event title",
 "forceAllDay": false,
 "attendees": ["attendee1@example.com", "attendee2@example.com"]${categoryJsonLine}
 }
+Omit any field you cannot determine from the email.
 Subject: "${subject}"
 Email body: "${emailBody}"`;
 }
@@ -98,21 +98,21 @@ Email body: "${emailBody}"`;
 function buildTaskPrompt(emailBody, subject, mailDatetime, currentDt, categories) {
   const { instruction: categoryInstruction, jsonLine: categoryJsonLine } = buildCategoryInstruction(categories);
 
-  return `Extract all relevant details required to generate a task from the following email. The extracted information should include:
-- Due Date and Time (including timezone, if specified)
-- Task summary
-- Initial Date and Time (including timezone, if specified)
-Ensure the data is formatted clearly and consistently so that it can be directly used for creating a task.
-If there are relative date references, consider that the date the email was sent is "${mailDatetime}". Calculate the start date based on this reference. If the calculated start date is earlier than "${currentDt}", recalculate the start date using "${currentDt}" as the base.
-If you're not able to get one or more of the required information, please respond with an empty string for that field.
+  return `Extract task details from the following email.
+
+Rules for dates and times:
+- Use the format YYYYMMDDTHHMMSS when a specific time is stated in the email (e.g. "3pm", "14:00").
+- Use the format YYYYMMDD (date only, no T or time) when NO time is mentioned. Do NOT invent or guess a time.
+- For relative dates (e.g. "by next Friday"), the email was sent on ${mailDatetime}. If the resolved date is before today (${currentDt}), use ${currentDt} instead.
+- If no date information is present, omit the date fields entirely.
 ${categoryInstruction}
-Generate a response in JSON format only. Do not include any additional text or explanations; provide only the JSON. Here is the format to be used:
+Respond with JSON only — no explanation, no markdown fences. Use this structure:
 {
-"initialDate": "YYYYMMDDTHHMMSS",
-"dueDate": "YYYYMMDDTHHMMSS",
-"summary": "Task summary here"${categoryJsonLine}
+"initialDate": "YYYYMMDD or YYYYMMDDTHHMMSS",
+"dueDate": "YYYYMMDD or YYYYMMDDTHHMMSS",
+"summary": "Task summary"${categoryJsonLine}
 }
-If there are no information about the dates, omit those fields.
+Omit any field you cannot determine from the email.
 Subject: "${subject}"
 Email body: "${emailBody}"`;
 }
