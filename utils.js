@@ -55,12 +55,13 @@ function extractTextBody(part) {
   return findPlain(part) || findHtml(part);
 }
 
+// Returns only the date portion of the email's sent timestamp.
+// Deliberately omits the time so the AI cannot confuse the email's
+// arrival time with the event's start time.
 function formatDatetime(date) {
-  if (!date) return new Date().toString();
-  return new Date(date).toLocaleString("en-US", {
+  if (!date) return new Date().toLocaleDateString("en-US");
+  return new Date(date).toLocaleDateString("en-US", {
     year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-    hour12: false,
   });
 }
 

@@ -10,6 +10,7 @@ const {
   buildCategoryInstruction,
   isValidHostUrl,
   extractTextBody,
+  formatDatetime,
 } = require("../utils.js");
 
 // ---------------------------------------------------------------------------
@@ -357,5 +358,32 @@ describe("extractTextBody", () => {
 
   test("handles null input", () => {
     expect(extractTextBody(null)).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatDatetime
+// ---------------------------------------------------------------------------
+describe("formatDatetime", () => {
+  test("returns only a date string (no time component)", () => {
+    // A known timestamp: 2026-02-25 at 15:07 local time
+    const result = formatDatetime(new Date(2026, 1, 25, 15, 7, 0).getTime());
+    expect(result).toMatch(/02\/25\/2026/);
+    // Must not contain hour digits like "15" or "03" that would indicate a time
+    expect(result).not.toMatch(/\d{2}:\d{2}/);
+  });
+
+  test("accepts an ISO date string", () => {
+    const result = formatDatetime("2026-03-10T09:00:00");
+    expect(result).toMatch(/03\/10\/2026/);
+    expect(result).not.toMatch(/\d{2}:\d{2}/);
+  });
+
+  test("falls back to today when given null", () => {
+    const result = formatDatetime(null);
+    // Should be a non-empty date string
+    expect(typeof result).toBe("string");
+    expect(result.length).toBeGreaterThan(0);
+    expect(result).not.toMatch(/\d{2}:\d{2}/);
   });
 });
