@@ -125,6 +125,22 @@ describe("calendar integration", () => {
     expectDate(result.endDate,   "20260306", 1);
   });
 
+  itOnline("date range with no year + ordinal collision ('2nd trimester … March 2nd-March 6th')", async () => {
+    // Regression: LLM was returning wrong year (2022) and off-by-one end date.
+    // The email contains "2nd" as both an ordinal adjective and a date ordinal,
+    // and no year is mentioned — the year must come from the email sent date.
+    const result = await extractCalendar(
+      "Our 2nd trimester Parent Teacher Conferences will be held the week of March 2nd-March 6th.",
+      "Parent Teacher Conferences",
+      { mailDate: "02/20/2026", currentDate: "02/20/2026" }
+    );
+    expect(result.forceAllDay).toBe(true);
+    // Year must be 2026, not a training-data year like 2022
+    expect(result.startDate.slice(0, 4)).toBe("2026");
+    expectDate(result.startDate, "20260302", 1);
+    expectDate(result.endDate,   "20260306", 1);
+  });
+
   // --- Timed events ---
 
   itOnline("explicit date and time → timed event", async () => {

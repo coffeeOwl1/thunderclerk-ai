@@ -241,6 +241,7 @@ Rules for dates and times:
 - If an end date or time is not mentioned, omit endDate entirely.
 - If the event is explicitly described as all-day, set forceAllDay to true.
 - For relative dates (e.g. "next Tuesday", "the week of March 2nd"), the email was sent on ${mailDatetime}. If the resolved date is before today (${currentDt}), use ${currentDt} instead.
+- When a month and day are mentioned without a year, use the year from the email sent date (${mailDatetime}).
 ${attendeeLine}
 ${categoryInstruction}
 Respond with JSON only — no explanation, no markdown fences. Use this structure:
