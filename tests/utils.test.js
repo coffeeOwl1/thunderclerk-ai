@@ -2,6 +2,8 @@
 
 const {
   normalizeCalDate,
+  addHoursToCalDate,
+  applyCalendarDefaults,
   extractJSON,
   buildAttendeesHint,
   buildDescription,
@@ -51,6 +53,71 @@ describe("normalizeCalDate", () => {
   test("date-only string gets midnight time", () => {
     expect(normalizeCalDate("20260225")).toBe("20260225T000000");
     expect(normalizeCalDate("2026-02-25")).toBe("20260225T000000");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// addHoursToCalDate
+// ---------------------------------------------------------------------------
+describe("addHoursToCalDate", () => {
+  test("adds hours within the same day", () => {
+    expect(addHoursToCalDate("20260225T090000", 1)).toBe("20260225T100000");
+  });
+
+  test("rolls over midnight correctly", () => {
+    expect(addHoursToCalDate("20260225T230000", 2)).toBe("20260226T010000");
+  });
+
+  test("adds zero hours (no change)", () => {
+    expect(addHoursToCalDate("20260225T140000", 0)).toBe("20260225T140000");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyCalendarDefaults
+// ---------------------------------------------------------------------------
+describe("applyCalendarDefaults", () => {
+  test("sets start to 9am when time is missing (T000000)", () => {
+    const data = { startDate: "20260225T000000", endDate: "20260225T000000" };
+    applyCalendarDefaults(data);
+    expect(data.startDate).toBe("20260225T090000");
+  });
+
+  test("sets end to start + 1 hour when end is missing", () => {
+    const data = { startDate: "20260225T140000", endDate: "" };
+    applyCalendarDefaults(data);
+    expect(data.endDate).toBe("20260225T150000");
+  });
+
+  test("sets end to start + 1 hour when end has no time (T000000)", () => {
+    const data = { startDate: "20260225T090000", endDate: "20260225T000000" };
+    applyCalendarDefaults(data);
+    expect(data.endDate).toBe("20260225T100000");
+  });
+
+  test("sets end to start + 1 hour when end is null", () => {
+    const data = { startDate: "20260225T090000", endDate: null };
+    applyCalendarDefaults(data);
+    expect(data.endDate).toBe("20260225T100000");
+  });
+
+  test("does not modify times that are already set", () => {
+    const data = { startDate: "20260225T140000", endDate: "20260225T153000" };
+    applyCalendarDefaults(data);
+    expect(data.startDate).toBe("20260225T140000");
+    expect(data.endDate).toBe("20260225T153000");
+  });
+
+  test("skips all defaults for all-day events", () => {
+    const data = { startDate: "20260225T000000", endDate: "", forceAllDay: true };
+    applyCalendarDefaults(data);
+    expect(data.startDate).toBe("20260225T000000");
+    expect(data.endDate).toBe("");
+  });
+
+  test("handles missing startDate gracefully", () => {
+    const data = { startDate: "", endDate: "" };
+    expect(() => applyCalendarDefaults(data)).not.toThrow();
   });
 });
 
@@ -226,19 +293,57 @@ describe("extractTextBody", () => {
     expect(extractTextBody(part)).toBe("Hello world");
   });
 
-  test("recurses into parts to find text/plain", () => {
+  test("prefers text/plain over text/html when both exist", () => {
     const part = {
       contentType: "multipart/alternative",
       parts: [
+        { contentType: "text/html", body: "<p>Hello HTML</p>" },
+        { contentType: "text/plain", body: "Hello plain" },
+      ],
+    };
+    expect(extractTextBody(part)).toBe("Hello plain");
+  });
+
+  test("falls back to text/html when no text/plain exists", () => {
+    const part = {
+      contentType: "multipart/mixed",
+      parts: [
         { contentType: "text/html", body: "<p>Hello</p>" },
-        { contentType: "text/plain", body: "Hello" },
+        { contentType: "application/octet-stream", body: "" },
       ],
     };
     expect(extractTextBody(part)).toBe("Hello");
   });
 
-  test("returns empty string when no text/plain found", () => {
-    const part = { contentType: "text/html", body: "<p>Hi</p>" };
+  test("strips HTML tags from fallback html body", () => {
+    const part = { contentType: "text/html", body: "<p>Hello <b>world</b></p>" };
+    expect(extractTextBody(part)).toBe("Hello world");
+  });
+
+  test("strips style and script blocks", () => {
+    const part = {
+      contentType: "text/html",
+      body: "<style>body{color:red}</style><p>Keep this</p><script>alert(1)</script>",
+    };
+    expect(extractTextBody(part)).toContain("Keep this");
+    expect(extractTextBody(part)).not.toContain("color");
+    expect(extractTextBody(part)).not.toContain("alert");
+  });
+
+  test("decodes common HTML entities", () => {
+    const part = { contentType: "text/html", body: "<p>AT&amp;T &lt;test&gt;</p>" };
+    expect(extractTextBody(part)).toBe("AT&T <test>");
+  });
+
+  test("converts br and block tags to newlines", () => {
+    const part = { contentType: "text/html", body: "<p>Line 1</p><p>Line 2</p>" };
+    const result = extractTextBody(part);
+    expect(result).toContain("Line 1");
+    expect(result).toContain("Line 2");
+  });
+
+  test("returns empty string when no text parts found", () => {
+    const part = { contentType: "application/pdf", body: "" };
     expect(extractTextBody(part)).toBe("");
   });
 

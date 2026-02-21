@@ -258,6 +258,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
   // Open dialog
   if (isCalendar) {
     normalizeCalendarData(parsed);
+    applyCalendarDefaults(parsed);
 
     // Inject description (built from email metadata, not AI-extracted)
     const description = buildDescription(emailBody, author, subject, descriptionFormat);

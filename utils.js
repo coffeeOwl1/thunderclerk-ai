@@ -3,18 +3,56 @@
 // Pure utility functions shared between background.js and unit tests.
 // No browser or XPCOM APIs are used here.
 
+function stripHtml(html) {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+// Prefer text/plain; fall back to text/html (stripped) for HTML-only emails.
 function extractTextBody(part) {
   if (!part) return "";
-  if (part.contentType === "text/plain" && part.body) {
-    return part.body;
-  }
-  if (part.parts) {
-    for (const child of part.parts) {
-      const text = extractTextBody(child);
-      if (text) return text;
+
+  // First pass: look for text/plain anywhere in the tree
+  function findPlain(p) {
+    if (!p) return "";
+    if (p.contentType === "text/plain" && p.body) return p.body;
+    if (p.parts) {
+      for (const child of p.parts) {
+        const t = findPlain(child);
+        if (t) return t;
+      }
     }
+    return "";
   }
-  return "";
+
+  // Second pass: look for text/html anywhere in the tree
+  function findHtml(p) {
+    if (!p) return "";
+    if (p.contentType === "text/html" && p.body) return stripHtml(p.body);
+    if (p.parts) {
+      for (const child of p.parts) {
+        const t = findHtml(child);
+        if (t) return t;
+      }
+    }
+    return "";
+  }
+
+  return findPlain(part) || findHtml(part);
 }
 
 function formatDatetime(date) {
@@ -61,6 +99,48 @@ function normalizeCalDate(dateStr) {
   const datePart = s.slice(0, tIdx).slice(0, 8);          // exactly 8 digits
   const timePart = s.slice(tIdx + 1).slice(0, 6).padEnd(6, "0"); // pad HH → HH0000 etc.
   return datePart + "T" + timePart;
+}
+
+// Add `hours` to a compact iCal date string (YYYYMMDDTHHMMSS).
+function addHoursToCalDate(dateStr, hours) {
+  const year  = parseInt(dateStr.slice(0, 4), 10);
+  const month = parseInt(dateStr.slice(4, 6), 10) - 1;
+  const day   = parseInt(dateStr.slice(6, 8), 10);
+  const hour  = parseInt(dateStr.slice(9, 11), 10);
+  const min   = parseInt(dateStr.slice(11, 13), 10);
+  const sec   = parseInt(dateStr.slice(13, 15), 10);
+  const d = new Date(year, month, day, hour, min, sec);
+  d.setHours(d.getHours() + hours);
+  const y  = String(d.getFullYear());
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const dy = String(d.getDate()).padStart(2, "0");
+  const h  = String(d.getHours()).padStart(2, "0");
+  const m  = String(d.getMinutes()).padStart(2, "0");
+  const s  = String(d.getSeconds()).padStart(2, "0");
+  return `${y}${mo}${dy}T${h}${m}${s}`;
+}
+
+// Apply sensible time defaults to a calendar event data object after
+// date normalization. All rules are skipped for all-day events.
+//
+//  - Start time missing (T000000): default to 9:00 AM
+//  - End date/time missing or empty: default to start + 1 hour
+//  - End time missing (T000000): default to start + 1 hour
+function applyCalendarDefaults(data) {
+  if (data.forceAllDay) return data;
+  if (!data.startDate)  return data;
+
+  // Default missing start time to 9am
+  if (data.startDate.endsWith("T000000")) {
+    data.startDate = data.startDate.slice(0, 9) + "090000";
+  }
+
+  // Default missing or timeless end to start + 1 hour
+  if (!data.endDate || data.endDate.endsWith("T000000")) {
+    data.endDate = addHoursToCalDate(data.startDate, 1);
+  }
+
+  return data;
 }
 
 // Extract the first complete JSON object from a string, handling
@@ -146,6 +226,8 @@ if (typeof module !== "undefined") {
   module.exports = {
     extractTextBody,
     normalizeCalDate,
+    addHoursToCalDate,
+    applyCalendarDefaults,
     extractJSON,
     buildAttendeesHint,
     buildDescription,
