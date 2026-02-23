@@ -22,6 +22,9 @@ const DEFAULTS = {
   replyMode:               "replyToSender",    // "replyToSender" | "replyToAll"
   // Contact settings
   contactAddressBook:      "",                 // "" = first writable address book
+  // Email cataloging settings
+  autoTagAfterAction:      true,
+  allowNewTags:            false,
   // Debug settings
   debugPromptPreview:      false,
 };
@@ -45,6 +48,7 @@ const MENU_IDS = new Set([
   "thunderclerk-ai-draft-reply",
   "thunderclerk-ai-summarize-forward",
   "thunderclerk-ai-extract-contact",
+  "thunderclerk-ai-catalog-email",
 ]);
 
 browser.menus.create({
@@ -99,6 +103,20 @@ browser.menus.create({
   id: "thunderclerk-ai-extract-contact",
   parentId: "thunderclerk-ai-parent",
   title: "Extract Contact",
+  contexts: ["message_list"],
+});
+
+browser.menus.create({
+  id: "thunderclerk-ai-sep-3",
+  parentId: "thunderclerk-ai-parent",
+  type: "separator",
+  contexts: ["message_list"],
+});
+
+browser.menus.create({
+  id: "thunderclerk-ai-catalog-email",
+  parentId: "thunderclerk-ai-parent",
+  title: "Catalog Email",
   contexts: ["message_list"],
 });
 
@@ -435,6 +453,90 @@ async function handleExtractContact(message, emailBody, settings) {
   });
 }
 
+// --- Tag color palette for newly created tags ---
+
+const TAG_COLORS = [
+  "#3366CC", "#DC3912", "#FF9900", "#109618", "#990099",
+  "#0099C6", "#DD4477", "#66AA00", "#B82E2E", "#316395",
+];
+let tagColorIndex = 0;
+
+function nextTagColor() {
+  const color = TAG_COLORS[tagColorIndex % TAG_COLORS.length];
+  tagColorIndex++;
+  return color;
+}
+
+// --- Catalog email (AI-powered tagging) ---
+
+async function catalogEmail(message, emailBody, settings) {
+  const host  = settings.ollamaHost  || DEFAULT_HOST;
+  const model = settings.ollamaModel || DEFAULTS.ollamaModel;
+  const author  = message.author  || "";
+  const subject = message.subject || "";
+
+  // Fetch existing tags
+  const existingTags = await browser.messages.tags.list();
+  const existingTagNames = existingTags.map(t => t.tag);
+
+  const prompt = buildCatalogPrompt(emailBody, subject, author, existingTagNames);
+  const parsed = await callOllamaWithNotification(host, model, prompt, "catalog email", settings);
+
+  const aiTags = parsed.tags;
+  if (!Array.isArray(aiTags) || aiTags.length === 0) {
+    notifyError("No tags", "The AI did not return any tags.");
+    return;
+  }
+
+  // Limit to 3 tags
+  const tagNames = aiTags.slice(0, 3);
+
+  // Resolve each tag: find existing (case-insensitive) or create new
+  const allowNew = !!settings.allowNewTags;
+  const tagKeys = [];
+  const appliedNames = [];
+  for (const name of tagNames) {
+    const existing = existingTags.find(
+      t => t.tag.toLowerCase() === name.toLowerCase()
+    );
+    if (existing) {
+      tagKeys.push(existing.key);
+      appliedNames.push(existing.tag);
+    } else if (allowNew) {
+      // Create new tag with a rotating color
+      const key = "$label_tc_" + name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+      try {
+        await browser.messages.tags.create(key, name, nextTagColor());
+        tagKeys.push(key);
+        appliedNames.push(name);
+      } catch (e) {
+        // Tag may already exist with that key (race condition)
+        console.warn("[ThunderClerk-AI] Could not create tag:", e.message);
+        const retry = existingTags.find(t => t.key === key);
+        if (retry) {
+          tagKeys.push(retry.key);
+          appliedNames.push(retry.tag);
+        }
+      }
+    }
+  }
+
+  if (tagKeys.length === 0) return;
+
+  // Read-merge-write: messages.update replaces all tags, so preserve existing
+  const currentMsg = await browser.messages.get(message.id);
+  const currentTags = currentMsg.tags || [];
+  const mergedTags = [...new Set([...currentTags, ...tagKeys])];
+
+  await browser.messages.update(message.id, { tags: mergedTags });
+
+  browser.notifications.create({
+    type: "basic",
+    title: "ThunderClerk-AI",
+    message: `Tagged: ${appliedNames.join(", ")}`,
+  }).catch(() => {});
+}
+
 // --- Menu click handler ---
 
 browser.menus.onClicked.addListener(async (info, tab) => {
@@ -465,6 +567,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
   }
 
   // Dispatch to the appropriate handler
+  const isCatalog = info.menuItemId === "thunderclerk-ai-catalog-email";
   try {
     if (info.menuItemId === "thunderclerk-ai-add-calendar") {
       await handleCalendar(message, emailBody, settings);
@@ -476,6 +579,15 @@ browser.menus.onClicked.addListener(async (info, tab) => {
       await handleSummarizeForward(message, emailBody, settings);
     } else if (info.menuItemId === "thunderclerk-ai-extract-contact") {
       await handleExtractContact(message, emailBody, settings);
+    } else if (isCatalog) {
+      await catalogEmail(message, emailBody, settings);
+    }
+
+    // Auto-tag after any non-catalog action (fire-and-forget)
+    if (!isCatalog && settings.autoTagAfterAction) {
+      catalogEmail(message, emailBody, settings).catch(e =>
+        console.warn("[ThunderClerk-AI] Auto-tag failed:", e.message)
+      );
     }
   } catch (e) {
     if (e.message?.includes("invalid JSON") || e.message?.includes("No JSON object") || e.message?.includes("Unclosed JSON")) {

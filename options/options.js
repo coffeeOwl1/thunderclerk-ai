@@ -13,6 +13,8 @@ const DEFAULTS = {
   taskUseCategory:       false,
   replyMode:             "replyToSender",
   contactAddressBook:    "",
+  autoTagAfterAction:    true,
+  allowNewTags:          false,
   debugPromptPreview:    false,
 };
 
@@ -164,6 +166,8 @@ async function restoreOptions() {
   document.getElementById("calendarUseCategory").checked    = !!s.calendarUseCategory;
   document.getElementById("taskUseCategory").checked        = !!s.taskUseCategory;
   document.getElementById("replyMode").value                = s.replyMode;
+  document.getElementById("autoTagAfterAction").checked      = !!s.autoTagAfterAction;
+  document.getElementById("allowNewTags").checked            = !!s.allowNewTags;
   document.getElementById("debugPromptPreview").checked     = !!s.debugPromptPreview;
 
   syncAttendeesUI(s.attendeesSource);
@@ -217,6 +221,8 @@ async function saveOptions() {
     taskUseCategory:       document.getElementById("taskUseCategory").checked,
     replyMode:             document.getElementById("replyMode").value,
     contactAddressBook:    document.getElementById("contactAddressBook").value,
+    autoTagAfterAction:    document.getElementById("autoTagAfterAction").checked,
+    allowNewTags:          document.getElementById("allowNewTags").checked,
     debugPromptPreview:    document.getElementById("debugPromptPreview").checked,
   };
 
