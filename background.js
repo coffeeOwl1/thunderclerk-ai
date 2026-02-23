@@ -18,6 +18,8 @@ const DEFAULTS = {
   // Category settings
   calendarUseCategory:     false,
   taskUseCategory:         false,
+  // Debug settings
+  debugPromptPreview:      false,
 };
 
 // --- First-run onboarding ---
@@ -103,6 +105,43 @@ async function callOllama(host, model, prompt) {
   return data.response;
 }
 
+function previewPrompt(prompt) {
+  return new Promise((resolve, reject) => {
+    browser.storage.local.set({ pendingPrompt: prompt }).then(() => {
+      const listener = (msg) => {
+        if (msg && msg.promptAction) {
+          browser.runtime.onMessage.removeListener(listener);
+          browser.storage.local.remove("pendingPrompt").catch(() => {});
+          if (msg.promptAction === "ok") {
+            resolve();
+          } else {
+            reject(new Error("Prompt cancelled by user."));
+          }
+        }
+      };
+      browser.runtime.onMessage.addListener(listener);
+
+      browser.windows.create({
+        url: browser.runtime.getURL("debug/preview.html"),
+        type: "popup",
+        width: 620,
+        height: 520,
+      }).then((win) => {
+        // If the user closes the window without clicking a button, treat as cancel
+        const onRemoved = (windowId) => {
+          if (windowId === win.id) {
+            browser.windows.onRemoved.removeListener(onRemoved);
+            browser.runtime.onMessage.removeListener(listener);
+            browser.storage.local.remove("pendingPrompt").catch(() => {});
+            reject(new Error("Prompt preview window closed."));
+          }
+        };
+        browser.windows.onRemoved.addListener(onRemoved);
+      });
+    });
+  });
+}
+
 function notifyError(title, message) {
   console.error("[ThunderClerk-AI]", title, message);
   browser.notifications.create({
@@ -180,6 +219,16 @@ browser.menus.onClicked.addListener(async (info, tab) => {
   const prompt = isCalendar
     ? buildCalendarPrompt(emailBody, subject, mailDatetime, currentDt, attendeeHints, categories, wantAiDescription)
     : buildTaskPrompt(emailBody, subject, mailDatetime, currentDt, categories, wantAiDescription);
+
+  // Debug: show prompt preview if enabled
+  if (settings.debugPromptPreview) {
+    try {
+      await previewPrompt(prompt);
+    } catch (e) {
+      // User cancelled or closed the preview window
+      return;
+    }
+  }
 
   // Call Ollama — show a progress notification while we wait
   const THINKING_ID = "thunderclerk-ai-thinking";

@@ -11,6 +11,7 @@ const DEFAULTS = {
   taskDefaultDue:        "none",
   calendarUseCategory:   false,
   taskUseCategory:       false,
+  debugPromptPreview:    false,
 };
 
 // --- Model list from Ollama ---
@@ -127,6 +128,7 @@ async function restoreOptions() {
   document.getElementById("taskDefaultDue").value           = s.taskDefaultDue;
   document.getElementById("calendarUseCategory").checked    = !!s.calendarUseCategory;
   document.getElementById("taskUseCategory").checked        = !!s.taskUseCategory;
+  document.getElementById("debugPromptPreview").checked     = !!s.debugPromptPreview;
 
   syncAttendeesUI(s.attendeesSource);
 
@@ -176,6 +178,7 @@ async function saveOptions() {
     taskDefaultDue:        document.getElementById("taskDefaultDue").value,
     calendarUseCategory:   document.getElementById("calendarUseCategory").checked,
     taskUseCategory:       document.getElementById("taskUseCategory").checked,
+    debugPromptPreview:    document.getElementById("debugPromptPreview").checked,
   };
 
   await browser.storage.sync.set(settings);
