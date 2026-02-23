@@ -1,0 +1,10 @@
+"use strict";
+
+// Copy this file to config.test.js and adjust to your environment.
+// config.test.js is gitignored — your personal settings stay local.
+// Environment variables (OLLAMA_HOST, OLLAMA_MODEL) take priority over these.
+
+module.exports = {
+  ollamaHost:  "http://127.0.0.1:11434",
+  ollamaModel: "mistral:7b",
+};

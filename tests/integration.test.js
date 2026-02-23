@@ -16,8 +16,11 @@ const {
   applyCalendarDefaults,
 } = require("../utils.js");
 
-const OLLAMA_HOST  = process.env.OLLAMA_HOST  || "http://127.0.0.1:11434";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "mistral:7b";
+let testConfig = {};
+try { testConfig = require("../config.test.js"); } catch {}
+
+const OLLAMA_HOST  = process.env.OLLAMA_HOST  || testConfig.ollamaHost  || "http://127.0.0.1:11434";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || testConfig.ollamaModel || "mistral:7b";
 
 // Reference dates — Feb 20 2026 is a Friday.
 const MAIL_DATE = "02/20/2026";

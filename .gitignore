@@ -7,6 +7,7 @@ package-lock.json
 *.zip
 config.js
 config.dev.js
+config.test.js
 
 # OS / editor
 .DS_Store

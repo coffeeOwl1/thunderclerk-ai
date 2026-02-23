@@ -77,6 +77,16 @@ npm test           # unit tests (~136 cases)
 npm run test:integration  # integration tests (needs running Ollama)
 ```
 
+To configure the Ollama host/model for integration tests, copy the example
+config and edit it:
+
+```bash
+cp config.test.js.example config.test.js
+# edit config.test.js with your Ollama host and model
+```
+
+Environment variables (`OLLAMA_HOST`, `OLLAMA_MODEL`) override the config file.
+
 ### Building
 
 A build script handles config selection and packaging:
