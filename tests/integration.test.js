@@ -316,3 +316,66 @@ describe("calendar integration", () => {
   });
 
 });
+
+// ---------------------------------------------------------------------------
+// Task extraction scenarios
+// ---------------------------------------------------------------------------
+
+// Mirrors the normalizeTaskData + pipeline from background.js handleTask().
+async function extractTask(emailBody, subject, opts = {}) {
+  const mailDate  = opts.mailDate   || MAIL_DATE;
+  const currentDt = opts.currentDate || TODAY;
+  const prompt = buildTaskPrompt(emailBody, subject, mailDate, currentDt, null);
+  const raw    = await callOllama(prompt);
+  const parsed = JSON.parse(extractJSON(raw));
+  // normalizeTaskData (from background.js)
+  if (parsed.dueDate)     parsed.dueDate     = normalizeCalDate(parsed.dueDate);
+  if (parsed.initialDate) parsed.initialDate = normalizeCalDate(parsed.initialDate);
+  if (parsed.InitialDate) {
+    parsed.initialDate = normalizeCalDate(parsed.InitialDate);
+    delete parsed.InitialDate;
+  }
+  if (!parsed.summary) parsed.summary = subject;
+  return parsed;
+}
+
+describe("task integration", () => {
+
+  itOnline("explicit deadline → dueDate extracted", async () => {
+    const result = await extractTask(
+      "Please submit the Q1 budget report by March 14, 2026. Finance needs it before the board meeting.",
+      "Q1 Budget Report Due"
+    );
+    expect(result.summary).toBeTruthy();
+    expect(result.dueDate).toBeDefined();
+    expectDate(result.dueDate, "20260314", 1);
+  });
+
+  itOnline("no dates in email → summary only, no crash", async () => {
+    const result = await extractTask(
+      "Don't forget to update the team wiki with the new onboarding steps we discussed.",
+      "Update Team Wiki"
+    );
+    expect(result).toBeDefined();
+    expect(typeof result.summary).toBe("string");
+    expect(result.summary.length).toBeGreaterThan(0);
+    // dueDate may or may not be present — just verify format if it is
+    if (result.dueDate) {
+      expect(result.dueDate).toMatch(/^\d{8}T\d{6}$/);
+    }
+  });
+
+  itOnline("relative deadline → resolves to a future date", async () => {
+    const result = await extractTask(
+      "Can you get the client proposal draft done by next Friday? They need it for their Monday meeting.",
+      "Client Proposal Draft",
+      { mailDate: "02/20/2026", currentDate: "02/20/2026" }
+    );
+    expect(result.summary).toBeTruthy();
+    expect(result.dueDate).toBeDefined();
+    // "next Friday" from Feb 20 (Friday) = Feb 27; allow tolerance
+    expect(result.dueDate >= "20260220T000000").toBe(true);
+    expectDate(result.dueDate, "20260227", 7);
+  });
+
+});
