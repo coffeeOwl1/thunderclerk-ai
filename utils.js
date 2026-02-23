@@ -192,7 +192,15 @@ function advancePastYear(dateStr, referenceYear) {
 // Rule: if the email contained an explicit time, treat as a timed event and
 // default a missing/timeless end to start + 1 hour.
 function applyCalendarDefaults(data) {
-  if (!data.startDate) return data;
+  if (!data.startDate) {
+    // LLM couldn't determine dates — default to today so the dialog can still open
+    const now = new Date();
+    const y  = String(now.getFullYear());
+    const mo = String(now.getMonth() + 1).padStart(2, "0");
+    const d  = String(now.getDate()).padStart(2, "0");
+    data.startDate = `${y}${mo}${d}T000000`;
+    data.forceAllDay = true;
+  }
 
   const startWasDateOnly = data.startDate.endsWith("T000000");
 

@@ -162,9 +162,20 @@ describe("applyCalendarDefaults", () => {
 
   // --- Edge cases ---
 
-  test("handles missing startDate gracefully", () => {
+  test("handles missing startDate — defaults to all-day today", () => {
+    const data = {};
+    applyCalendarDefaults(data);
+    expect(data.startDate).toMatch(/^\d{8}T000000$/);
+    expect(data.endDate).toBe(data.startDate);
+    expect(data.forceAllDay).toBe(true);
+  });
+
+  test("handles empty-string startDate — defaults to all-day today", () => {
     const data = { startDate: "", endDate: "" };
-    expect(() => applyCalendarDefaults(data)).not.toThrow();
+    applyCalendarDefaults(data);
+    expect(data.startDate).toMatch(/^\d{8}T000000$/);
+    expect(data.endDate).toBe(data.startDate);
+    expect(data.forceAllDay).toBe(true);
   });
 });
 
