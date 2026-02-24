@@ -188,6 +188,21 @@
   </div>
   <div class="hint" style="color:#b45309;">When disabled, the AI can only apply tags that already exist in Thunderbird. Enable at your own risk — the AI may create many one-off tags that clutter your tag list.</div>
 
+  <!-- Auto Analyze -->
+  <h3>Auto Analyze</h3>
+
+  <div class="checkbox-row">
+    <input type="checkbox" id="autoAnalyzeEnabled" />
+    <label for="autoAnalyzeEnabled">Enable Auto Analyze</label>
+  </div>
+  <div class="hint">Adds the "Auto Analyze" context menu item and keyboard shortcut. Disabled by default due to high model requirements.</div>
+
+  <div style="margin-top:10px; padding:8px 10px; background:#fff8e1; border:1px solid #f0c040; border-radius:4px; font-size:11px; color:#444; line-height:1.5;">
+    <strong>Requirements notice:</strong> Auto Analyze sends a large, complex prompt and requires a capable model with generous token limits. On smaller or slower models it can be very slow and may produce incomplete results.<br><br>
+    <strong>Minimum recommended:</strong> a 20B+ parameter model (e.g. <code>gpt-oss:20b</code>) with at least 16 GB VRAM. Smaller models are not recommended for this feature — accuracy drops significantly.<br><br>
+    If results look wrong, enable <em>"Show prompt preview"</em> in the Debug section below and check the raw AI output for issues.
+  </div>
+
   <!-- Debug -->
   <h3>Debug</h3>
 

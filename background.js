@@ -110,6 +110,22 @@ browser.menus.create({
   parentId: "thunderclerk-ai-parent",
   title: "Auto Analyze",
   contexts: ["message_list"],
+  visible: false,              // hidden until enabled in settings
+});
+
+// Show/hide Auto Analyze menu item based on setting
+async function syncAutoAnalyzeMenu() {
+  const { autoAnalyzeEnabled } = await browser.storage.sync.get({ autoAnalyzeEnabled: DEFAULTS.autoAnalyzeEnabled });
+  browser.menus.update("thunderclerk-ai-auto-analyze", { visible: !!autoAnalyzeEnabled });
+  // Also hide/show the separator before it
+  browser.menus.update("thunderclerk-ai-sep-4", { visible: !!autoAnalyzeEnabled });
+}
+syncAutoAnalyzeMenu();
+
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === "sync" && changes.autoAnalyzeEnabled) {
+    syncAutoAnalyzeMenu();
+  }
 });
 
 // Pure utility functions (normalizeCalDate, extractJSON, buildAttendeesHint,
@@ -990,6 +1006,10 @@ browser.menus.onClicked.addListener(async (info, tab) => {
     } else if (isCatalog) {
       await catalogEmail(message, emailBody, settings);
     } else if (isAutoAnalyze) {
+      if (!settings.autoAnalyzeEnabled) {
+        notifyError("Auto Analyze disabled", "Enable Auto Analyze in the extension settings to use this feature.");
+        return;
+      }
       await handleAutoAnalyze(message, emailBody, settings);
     }
 
@@ -1013,6 +1033,13 @@ browser.menus.onClicked.addListener(async (info, tab) => {
 
 browser.commands.onCommand.addListener(async (command) => {
   if (command !== "auto-analyze") return;
+
+  // Check if Auto Analyze is enabled
+  const { autoAnalyzeEnabled } = await browser.storage.sync.get({ autoAnalyzeEnabled: DEFAULTS.autoAnalyzeEnabled });
+  if (!autoAnalyzeEnabled) {
+    notifyError("Auto Analyze disabled", "Enable Auto Analyze in the extension settings to use this feature.");
+    return;
+  }
 
   let message;
   try {

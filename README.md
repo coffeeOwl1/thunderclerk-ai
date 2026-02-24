@@ -14,7 +14,7 @@ No cloud accounts, no API keys, no text selection required — just Thunderbird 
 - **Summarize & Forward** — produce a TL;DR + bullet-point summary for forwarding
 - **Extract Contact** — pull contact info from email signatures into your address book
 - **Catalog Email** — auto-tag emails using AI, with support for existing Thunderbird tags
-- **Auto Analyze** — single-click analysis: get a summary, detected events/tasks/contacts, and batch-select which actions to execute (reply, forward, catalog, archive, delete). Also available via keyboard shortcut (`Ctrl+Shift+E`). Includes fallback overrides when the AI doesn't detect an item type.
+- **Auto Analyze** — single-click analysis: get a summary, detected events/tasks/contacts, and batch-select which actions to execute (reply, forward, catalog, archive, delete). Also available via keyboard shortcut (`Ctrl+Shift+E`). Includes fallback overrides when the AI doesn't detect an item type. Disabled by default — requires a 20B+ parameter model (see settings).
 - AI extracts title, dates, times, attendees, and (optionally) category
 - Reads the full email body — no need to select text first
 - All processing is done locally via your own Ollama instance
@@ -59,6 +59,7 @@ After installation the Settings page opens automatically. You can also reach it 
 | Auto-select category | Off | Ask the AI to pick the best category for events/tasks |
 | Auto-tag after actions | On | Automatically tag emails after using other actions |
 | Allow new tags | Off | Let the AI create new tags (experimental — may clutter your tag list) |
+| Enable Auto Analyze | Off | Show the Auto Analyze menu item and keyboard shortcut. Requires a 20B+ parameter model with at least 16 GB VRAM. Smaller models produce unreliable results. |
 
 ## Keyboard Shortcuts
 

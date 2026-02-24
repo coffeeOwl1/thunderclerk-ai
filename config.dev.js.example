@@ -24,6 +24,8 @@ const DEFAULTS = {
   // Email cataloging settings
   autoTagAfterAction:    true,
   allowNewTags:          false,
+  // Auto Analyze settings
+  autoAnalyzeEnabled:    true,
   // Debug settings
   debugPromptPreview:    true,
 };

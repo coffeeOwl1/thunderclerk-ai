@@ -152,6 +152,7 @@ async function restoreOptions() {
   document.getElementById("replyMode").value                = s.replyMode;
   document.getElementById("autoTagAfterAction").checked      = !!s.autoTagAfterAction;
   document.getElementById("allowNewTags").checked            = !!s.allowNewTags;
+  document.getElementById("autoAnalyzeEnabled").checked      = !!s.autoAnalyzeEnabled;
   document.getElementById("debugPromptPreview").checked     = !!s.debugPromptPreview;
 
   syncAttendeesUI(s.attendeesSource);
@@ -207,6 +208,7 @@ async function saveOptions() {
     contactAddressBook:    document.getElementById("contactAddressBook").value,
     autoTagAfterAction:    document.getElementById("autoTagAfterAction").checked,
     allowNewTags:          document.getElementById("allowNewTags").checked,
+    autoAnalyzeEnabled:    document.getElementById("autoAnalyzeEnabled").checked,
     debugPromptPreview:    document.getElementById("debugPromptPreview").checked,
   };
 
