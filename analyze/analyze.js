@@ -83,6 +83,14 @@ document.addEventListener("DOMContentLoaded", async () => {
       await browser.runtime.sendMessage({ analyzeAction: "useReply" });
       useReplyBtn.textContent = "Sent";
     });
+  } else if (analysis._replyFailed) {
+    const replySection = document.getElementById("reply-section");
+    const replyText = document.getElementById("reply-text");
+
+    replyText.textContent = "Could not generate a reply. You can try again using the Quick Actions below.";
+    replyText.classList.add("error-text");
+    replySection.style.display = "";
+    document.getElementById("use-reply-btn").style.display = "none";
   }
 
   // --- Render Quick Actions ---
@@ -141,15 +149,37 @@ document.addEventListener("DOMContentLoaded", async () => {
       } else {
         btn.classList.add("error");
         btn.textContent = "\u2717 Error";
+        btn.title = msg.error || "Pre-extraction failed";
         btn.disabled = false;
-        // Auto-revert to clickable state after 3s (clicking triggers live fallback)
+        // Auto-revert to clickable state after 4s (clicking triggers live fallback)
         setTimeout(() => {
           if (btn.classList.contains("error")) {
             btn.classList.remove("error");
             btn.textContent = btnText;
+            btn.title = "";
           }
-        }, 3000);
+        }, 4000);
       }
+    });
+  });
+
+  // --- Listen for catastrophic batch error (all extractions failed to start) ---
+  browser.runtime.onMessage.addListener((msg) => {
+    if (!msg || !msg.batchError) return;
+    document.querySelectorAll(".add-btn.processing").forEach(btn => {
+      const btnText = btn.dataset.btnText || "Add";
+      btn.classList.remove("processing");
+      btn.classList.add("error");
+      btn.textContent = "\u2717 Error";
+      btn.title = msg.error || "Extraction failed";
+      btn.disabled = false;
+      setTimeout(() => {
+        if (btn.classList.contains("error")) {
+          btn.classList.remove("error");
+          btn.textContent = btnText;
+          btn.title = "";
+        }
+      }, 4000);
     });
   });
 
@@ -166,18 +196,21 @@ document.addEventListener("DOMContentLoaded", async () => {
       btn.classList.remove("processing");
       btn.classList.add("done");
       btn.textContent = "\u2713 Done";
+      btn.title = "";
     } else {
       btn.classList.remove("processing");
       btn.classList.add("error");
       btn.textContent = "\u2717 Error";
+      btn.title = msg.error || "Action failed";
       btn.disabled = false;
-      // Auto-revert to normal state after 3s for retry
+      // Auto-revert to normal state after 4s for retry
       setTimeout(() => {
         if (btn.classList.contains("error")) {
           btn.classList.remove("error");
           btn.textContent = btnText;
+          btn.title = "";
         }
-      }, 3000);
+      }, 4000);
     }
   });
 

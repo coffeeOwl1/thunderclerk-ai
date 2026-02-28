@@ -851,7 +851,7 @@ async function runBatchExtractions(analysis, message, emailBody, settings, cache
       } catch (e) {
         console.warn("[ThunderClerk-AI] Batch events failed:", e.message);
         cache.events = { data: null, error: e.message };
-        browser.runtime.sendMessage({ batchReady: true, group: "events", success: false }).catch(() => {});
+        browser.runtime.sendMessage({ batchReady: true, group: "events", success: false, error: e.message }).catch(() => {});
       }
     })());
   }
@@ -881,7 +881,7 @@ async function runBatchExtractions(analysis, message, emailBody, settings, cache
       } catch (e) {
         console.warn("[ThunderClerk-AI] Batch tasks failed:", e.message);
         cache.tasks = { data: null, error: e.message };
-        browser.runtime.sendMessage({ batchReady: true, group: "tasks", success: false }).catch(() => {});
+        browser.runtime.sendMessage({ batchReady: true, group: "tasks", success: false, error: e.message }).catch(() => {});
       }
     })());
   }
@@ -903,7 +903,7 @@ async function runBatchExtractions(analysis, message, emailBody, settings, cache
       } catch (e) {
         console.warn("[ThunderClerk-AI] Batch contacts failed:", e.message);
         cache.contacts = { data: null, error: e.message };
-        browser.runtime.sendMessage({ batchReady: true, group: "contacts", success: false }).catch(() => {});
+        browser.runtime.sendMessage({ batchReady: true, group: "contacts", success: false, error: e.message }).catch(() => {});
       }
     })());
   }
@@ -932,7 +932,7 @@ async function runBatchExtractions(analysis, message, emailBody, settings, cache
     } catch (e) {
       console.warn("[ThunderClerk-AI] Batch quickCalendar failed:", e.message);
       cache.quickCalendar = { data: null, error: e.message };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickCalendar", success: false }).catch(() => {});
+      browser.runtime.sendMessage({ batchReady: true, group: "quickCalendar", success: false, error: e.message }).catch(() => {});
     }
   })());
 
@@ -956,7 +956,7 @@ async function runBatchExtractions(analysis, message, emailBody, settings, cache
     } catch (e) {
       console.warn("[ThunderClerk-AI] Batch quickTask failed:", e.message);
       cache.quickTask = { data: null, error: e.message };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickTask", success: false }).catch(() => {});
+      browser.runtime.sendMessage({ batchReady: true, group: "quickTask", success: false, error: e.message }).catch(() => {});
     }
   })());
 
@@ -972,7 +972,7 @@ async function runBatchExtractions(analysis, message, emailBody, settings, cache
     } catch (e) {
       console.warn("[ThunderClerk-AI] Batch quickContact failed:", e.message);
       cache.quickContact = { data: null, error: e.message };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickContact", success: false }).catch(() => {});
+      browser.runtime.sendMessage({ batchReady: true, group: "quickContact", success: false, error: e.message }).catch(() => {});
     }
   })());
 
@@ -989,7 +989,7 @@ async function runBatchExtractions(analysis, message, emailBody, settings, cache
     } catch (e) {
       console.warn("[ThunderClerk-AI] Batch quickForward failed:", e.message);
       cache.quickForward = { data: null, error: e.message };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickForward", success: false }).catch(() => {});
+      browser.runtime.sendMessage({ batchReady: true, group: "quickForward", success: false, error: e.message }).catch(() => {});
     }
   })());
 
@@ -1007,7 +1007,7 @@ async function runBatchExtractions(analysis, message, emailBody, settings, cache
     } catch (e) {
       console.warn("[ThunderClerk-AI] Batch quickCatalog failed:", e.message);
       cache.quickCatalog = { data: null, error: e.message };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickCatalog", success: false }).catch(() => {});
+      browser.runtime.sendMessage({ batchReady: true, group: "quickCatalog", success: false, error: e.message }).catch(() => {});
     }
   })());
 
@@ -1113,8 +1113,12 @@ async function handleAutoAnalyze(message, emailBody, settings) {
     }
   }
 
-  // Attach reply body so the dialog can display it
-  if (replyBody) analysis._replyBody = replyBody;
+  // Attach reply body so the dialog can display it (or flag failure)
+  if (replyBody) {
+    analysis._replyBody = replyBody;
+  } else {
+    analysis._replyFailed = true;
+  }
 
   // Extraction cache — populated by batch pre-extraction, consumed by item clicks
   const extractionCache = {};
@@ -1127,6 +1131,7 @@ async function handleAutoAnalyze(message, emailBody, settings) {
     if (msg.analyzeAction === "dialogReady") {
       runBatchExtractions(analysis, message, emailBody, settings, extractionCache).catch(e => {
         console.error("[ThunderClerk-AI] Batch extraction error:", e.message);
+        browser.runtime.sendMessage({ batchError: true, error: e.message }).catch(() => {});
       });
       return;
     }
