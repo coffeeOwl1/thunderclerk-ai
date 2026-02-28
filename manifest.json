@@ -53,12 +53,21 @@
     "scripts": ["config.js", "utils.js", "cache.js", "processor.js", "background.js"]
   },
 
+  "message_display_action": {
+    "default_title": "ThunderClerk-AI: Auto Analyze",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+
   "commands": {
-    "auto-analyze": {
+    "_execute_message_display_action": {
       "suggested_key": {
         "default": "Ctrl+Shift+E"
       },
-      "description": "Auto Analyze the selected email"
+      "description": "Auto Analyze the displayed email"
     }
   },
 

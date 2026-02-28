@@ -142,19 +142,24 @@ browser.menus.create({
   visible: false,              // hidden until enabled in settings
 });
 
-// Show/hide Auto Analyze menu item based on setting
-async function syncAutoAnalyzeMenu() {
+// Show/hide Auto Analyze menu items and message display action button
+async function syncAutoAnalyzeVisibility() {
   const { autoAnalyzeEnabled } = await browser.storage.sync.get({ autoAnalyzeEnabled: DEFAULTS.autoAnalyzeEnabled });
-  browser.menus.update("thunderclerk-ai-auto-analyze", { visible: !!autoAnalyzeEnabled });
-  browser.menus.update("thunderclerk-ai-queue-analysis", { visible: !!autoAnalyzeEnabled });
-  // Also hide/show the separator before it
-  browser.menus.update("thunderclerk-ai-sep-4", { visible: !!autoAnalyzeEnabled });
+  const enabled = !!autoAnalyzeEnabled;
+  browser.menus.update("thunderclerk-ai-auto-analyze", { visible: enabled });
+  browser.menus.update("thunderclerk-ai-queue-analysis", { visible: enabled });
+  browser.menus.update("thunderclerk-ai-sep-4", { visible: enabled });
+  // Enable/disable the message header toolbar button
+  browser.messageDisplayAction.setTitle({
+    title: enabled ? "ThunderClerk-AI: Auto Analyze" : "ThunderClerk-AI: Auto Analyze (disabled in settings)",
+  });
+  browser.messageDisplayAction.enable();
 }
-syncAutoAnalyzeMenu();
+syncAutoAnalyzeVisibility();
 
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === "sync" && changes.autoAnalyzeEnabled) {
-    syncAutoAnalyzeMenu();
+    syncAutoAnalyzeVisibility();
   }
 });
 
@@ -1170,6 +1175,15 @@ browser.menus.onClicked.addListener(async (info, tab) => {
       title: "ThunderClerk-AI",
       message: `Queued ${queued} message${queued === 1 ? "" : "s"} for analysis`,
     }).catch(() => {});
+    // Refresh badge to show "queued" indicator on the currently displayed message
+    browser.tabs.query({ active: true, currentWindow: true }).then(async (tabs) => {
+      for (const t of tabs) {
+        try {
+          const displayed = await browser.messageDisplay.getDisplayedMessage(t.id);
+          if (displayed) updateMessageDisplayBadge(t, displayed);
+        } catch {}
+      }
+    }).catch(() => {});
     return;
   }
 
@@ -1239,11 +1253,9 @@ browser.menus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// --- Keyboard shortcut handler ---
+// --- Message display action button (header toolbar) ---
 
-browser.commands.onCommand.addListener(async (command) => {
-  if (command !== "auto-analyze") return;
-
+browser.messageDisplayAction.onClicked.addListener(async (tab) => {
   // Check if Auto Analyze is enabled
   const { autoAnalyzeEnabled } = await browser.storage.sync.get({ autoAnalyzeEnabled: DEFAULTS.autoAnalyzeEnabled });
   if (!autoAnalyzeEnabled) {
@@ -1253,9 +1265,7 @@ browser.commands.onCommand.addListener(async (command) => {
 
   let message;
   try {
-    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tabs || tabs.length === 0) return;
-    message = await browser.messageDisplay.getDisplayedMessage(tabs[0].id);
+    message = await browser.messageDisplay.getDisplayedMessage(tab.id);
   } catch {
     // Not viewing a message
   }
@@ -1290,6 +1300,92 @@ browser.commands.onCommand.addListener(async (command) => {
       notifyError("Error", e.message);
     }
   }
+});
+
+// --- Message display action badge updates ---
+
+// Update the badge on the message display action button when a message is viewed.
+// Shows the number of detected items if cached, "..." if processing, nothing otherwise.
+async function updateMessageDisplayBadge(tab, message) {
+  const tabId = tab.id;
+  try {
+    const { autoAnalyzeEnabled } = await browser.storage.sync.get({ autoAnalyzeEnabled: DEFAULTS.autoAnalyzeEnabled });
+    if (!autoAnalyzeEnabled) {
+      browser.messageDisplayAction.setBadgeText({ tabId, text: "" });
+      return;
+    }
+
+    if (!message) {
+      browser.messageDisplayAction.setBadgeText({ tabId, text: "" });
+      return;
+    }
+
+    // Check if currently in the processing queue
+    const inQueue = bgQueue.some(item => item.messageId === message.id);
+
+    const cached = await cacheGet(message.id);
+    if (cached && cached.raw) {
+      // Count detected items
+      const raw = cached.raw;
+      let count = 0;
+      if (Array.isArray(raw.events))   count += raw.events.length;
+      if (Array.isArray(raw.tasks))    count += raw.tasks.length;
+      if (Array.isArray(raw.contacts)) count += raw.contacts.length;
+
+      if (count > 0) {
+        browser.messageDisplayAction.setBadgeText({ tabId, text: String(count) });
+        browser.messageDisplayAction.setBadgeBackgroundColor({ tabId, color: "#4CAF50" });
+      } else {
+        // Cached but nothing found — show a check mark via empty badge
+        browser.messageDisplayAction.setBadgeText({ tabId, text: "✓" });
+        browser.messageDisplayAction.setBadgeBackgroundColor({ tabId, color: "#9E9E9E" });
+      }
+    } else if (inQueue) {
+      browser.messageDisplayAction.setBadgeText({ tabId, text: "…" });
+      browser.messageDisplayAction.setBadgeBackgroundColor({ tabId, color: "#FF9800" });
+    } else {
+      // Check index for error status
+      const index = await _getCacheIndex();
+      const entry = index.entries[message.id];
+      if (entry && entry.status === "error") {
+        browser.messageDisplayAction.setBadgeText({ tabId, text: "!" });
+        browser.messageDisplayAction.setBadgeBackgroundColor({ tabId, color: "#F44336" });
+      } else {
+        browser.messageDisplayAction.setBadgeText({ tabId, text: "" });
+      }
+    }
+  } catch (e) {
+    // Badge updates are best-effort
+    if (DEBUG) console.warn("[ThunderClerk-AI] Badge update error:", e.message);
+  }
+}
+
+browser.messageDisplay.onMessageDisplayed.addListener((tab, message) => {
+  updateMessageDisplayBadge(tab, message);
+});
+
+// Also refresh badge when a background processing item finishes.
+// We hook into cacheSet by listening for storage changes on cache keys.
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") return;
+
+  // Check if any cache_* keys changed (a new cache entry was written)
+  const cacheKeysChanged = Object.keys(changes).some(k => k.startsWith("cache_"));
+  if (!cacheKeysChanged) return;
+
+  // Refresh badge for the currently displayed message in each mail tab
+  browser.tabs.query({ active: true, currentWindow: true }).then(async (tabs) => {
+    for (const tab of tabs) {
+      try {
+        const message = await browser.messageDisplay.getDisplayedMessage(tab.id);
+        if (message) {
+          updateMessageDisplayBadge(tab, message);
+        }
+      } catch {
+        // Tab might not be displaying a message
+      }
+    }
+  }).catch(() => {});
 });
 
 // --- Background processor status handler ---

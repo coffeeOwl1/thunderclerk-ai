@@ -14,7 +14,7 @@ No cloud accounts, no API keys, no text selection required — just Thunderbird 
 - **Summarize & Forward** — produce a TL;DR + bullet-point summary for forwarding
 - **Extract Contact** — pull contact info from email signatures into your address book
 - **Catalog Email** — auto-tag emails using AI, with support for existing Thunderbird tags
-- **Auto Analyze** — single-click analysis: get a summary, detected events/tasks/contacts ("What I Found") as clickable Add buttons, a suggested AI reply, and five always-visible Quick Actions (create event, create task, extract contact, summarize & forward, tag email). Cached results display instantly; on cache miss a single combined Ollama call runs (~30-60s) and caches the result. Archive/Delete checkboxes at the bottom for post-triage cleanup. Also available via keyboard shortcut (`Ctrl+Shift+E`). Disabled by default — requires a 20B+ parameter model (see settings).
+- **Auto Analyze** — one-click analysis from the message header toolbar button (next to Reply/Forward), or via `Ctrl+Shift+E`. Shows a summary, detected events/tasks/contacts ("What I Found") as clickable Add buttons, a suggested AI reply, and five Quick Actions. The toolbar button shows a badge: green with item count when cached results exist, "…" when queued for processing, "✓" when analyzed with nothing found, "!" on error. Cached results display instantly; on cache miss a single combined Ollama call runs (~30-60s) and caches the result. Archive/Delete checkboxes for post-triage cleanup. Also available via right-click context menu. Disabled by default — requires a 20B+ parameter model (see settings).
 - **Background Processing** — automatically processes incoming emails in the background using a single combined Ollama call. Results are cached persistently so Auto Analyze shows results instantly (no waiting for Ollama). New emails are processed as they arrive; existing emails are backfilled on startup. Manual actions always take priority over background processing.
 - AI extracts title, dates, times, attendees, and (optionally) category
 - Reads the full email body — no need to select text first
@@ -70,7 +70,7 @@ After installation the Settings page opens automatically. You can also reach it 
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+Shift+E` | Auto Analyze the displayed email |
+| `Ctrl+Shift+E` | Auto Analyze the displayed email (same as clicking the toolbar button) |
 
 You can customize the shortcut in **Add-ons Manager → gear icon → Manage Extension Shortcuts**.
 
@@ -81,7 +81,7 @@ The extension requests these permissions:
 - **messagesRead** — read email content for AI analysis
 - **messagesMove** — archive emails (via Auto Analyze)
 - **messagesDelete** — delete emails (via Auto Analyze)
-- **messageDisplay** — detect which message is open (for keyboard shortcut)
+- **messageDisplay** — detect which message is open (for toolbar button badge and keyboard shortcut)
 - **menus** — add right-click context menu items
 - **storage** — save settings
 - **compose** — create reply/forward drafts
