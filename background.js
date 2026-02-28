@@ -47,6 +47,7 @@ const MENU_IDS = new Set([
   "thunderclerk-ai-extract-contact",
   "thunderclerk-ai-catalog-email",
   "thunderclerk-ai-auto-analyze",
+  "thunderclerk-ai-queue-analysis",
 ]);
 
 browser.menus.create({
@@ -133,10 +134,19 @@ browser.menus.create({
   visible: false,              // hidden until enabled in settings
 });
 
+browser.menus.create({
+  id: "thunderclerk-ai-queue-analysis",
+  parentId: "thunderclerk-ai-parent",
+  title: "Queue for Analysis",
+  contexts: ["message_list"],
+  visible: false,              // hidden until enabled in settings
+});
+
 // Show/hide Auto Analyze menu item based on setting
 async function syncAutoAnalyzeMenu() {
   const { autoAnalyzeEnabled } = await browser.storage.sync.get({ autoAnalyzeEnabled: DEFAULTS.autoAnalyzeEnabled });
   browser.menus.update("thunderclerk-ai-auto-analyze", { visible: !!autoAnalyzeEnabled });
+  browser.menus.update("thunderclerk-ai-queue-analysis", { visible: !!autoAnalyzeEnabled });
   // Also hide/show the separator before it
   browser.menus.update("thunderclerk-ai-sep-4", { visible: !!autoAnalyzeEnabled });
 }
@@ -624,87 +634,6 @@ function applyTaskSettings(parsed, message, emailBody, settings) {
 
 // --- Auto Analyze ---
 
-// Extract and open a single detected item (event, task, or contact).
-// Returns { success: true } or { success: false, error: "..." }.
-async function processSingleItem(group, index, message, emailBody, settings, analysis) {
-  const host    = settings.ollamaHost  || DEFAULT_HOST;
-  const model   = settings.ollamaModel || DEFAULTS.ollamaModel;
-  const author  = message.author  || "";
-  const subject = message.subject || "";
-  const mailDatetime = formatDatetime(message.date);
-  const currentDt    = currentDatetime();
-
-  if (group === "events" && analysis.events) {
-    const attendeesSource = settings.attendeesSource || "from_to";
-    const attendeesStatic = settings.attendeesStatic || "";
-    const attendeeHints   = buildAttendeesHint(message, attendeesSource, attendeesStatic);
-    const calendarUseCategory = !!settings.calendarUseCategory;
-
-    let categories = null;
-    if (calendarUseCategory) {
-      try { categories = await browser.CalendarTools.getCategories(); } catch {}
-    }
-
-    const wantAiDescription = (settings.descriptionFormat || "body_from_subject") === "ai_summary";
-    const prompt = buildCalendarArrayPrompt(
-      emailBody, subject, mailDatetime, currentDt, attendeeHints,
-      categories, wantAiDescription, analysis.events, [index]
-    );
-    const parsed = await callOllamaWithNotification(host, model, prompt, "extract event details", settings, buildOllamaOptions(settings));
-    const events = parsed.events || [parsed];
-    for (const evt of events) {
-      applyEventSettings(evt, message, emailBody, settings);
-      await browser.CalendarTools.openCalendarDialog(evt);
-    }
-  } else if (group === "tasks" && analysis.tasks) {
-    const taskUseCategory = !!settings.taskUseCategory;
-    let categories = null;
-    if (taskUseCategory) {
-      try { categories = await browser.CalendarTools.getCategories(); } catch {}
-    }
-
-    const wantAiDescription = (settings.taskDescriptionFormat || "body_from_subject") === "ai_summary";
-    const prompt = buildTaskArrayPrompt(
-      emailBody, subject, mailDatetime, currentDt,
-      categories, wantAiDescription, analysis.tasks, [index]
-    );
-    const parsed = await callOllamaWithNotification(host, model, prompt, "extract task details", settings, buildOllamaOptions(settings));
-    const tasks = parsed.tasks || [parsed];
-    for (const task of tasks) {
-      applyTaskSettings(task, message, emailBody, settings);
-      await browser.CalendarTools.openTaskDialog(task);
-    }
-  } else if (group === "contacts" && analysis.contacts) {
-    const prompt = buildContactArrayPrompt(
-      emailBody, subject, author, analysis.contacts, [index]
-    );
-    const parsed = await callOllamaWithNotification(host, model, prompt, "extract contact info", settings, buildOllamaOptions(settings));
-    const contacts = parsed.contacts || [parsed];
-    for (const contact of contacts) {
-      await browser.storage.local.set({
-        pendingContact: contact,
-        contactAddressBook: settings.contactAddressBook || "",
-      });
-      await new Promise((resolve) => {
-        browser.windows.create({
-          type: "popup",
-          url: "contact/review.html",
-          width: 420,
-          height: 520,
-        }).then((win) => {
-          const onRemoved = (windowId) => {
-            if (windowId === win.id) {
-              browser.windows.onRemoved.removeListener(onRemoved);
-              resolve();
-            }
-          };
-          browser.windows.onRemoved.addListener(onRemoved);
-        });
-      });
-    }
-  }
-}
-
 // Open a compose window with a pre-generated reply body.
 async function openComposeWithReply(message, replyBody, settings) {
   const replyMode = settings.replyMode || "replyToSender";
@@ -811,210 +740,88 @@ function repairAnalysisJSON(raw) {
   return null;
 }
 
-// Batch pre-extract all detected items after the dialog opens.
-// Stores results in cache and notifies the dialog as each group completes.
-async function runBatchExtractions(analysis, message, emailBody, settings, cache) {
-  const host    = settings.ollamaHost  || DEFAULT_HOST;
-  const model   = settings.ollamaModel || DEFAULTS.ollamaModel;
-  const author  = message.author  || "";
-  const subject = message.subject || "";
-  const mailDatetime = formatDatetime(message.date);
-  const currentDt    = currentDatetime();
+// Strip objects down to only the fields accepted by the CalendarTools API,
+// so extra model-generated fields (like "preview") don't trigger type errors.
+const CALENDAR_API_KEYS = new Set([
+  "startDate", "endDate", "summary", "forceAllDay", "attendees",
+  "timezone", "use_timezone", "description", "calendar_name", "category",
+]);
+const TASK_API_KEYS = new Set([
+  "dueDate", "summary", "initialDate", "timezone", "use_timezone",
+  "description", "calendar_name", "category",
+]);
 
-  const jobs = [];
+function pickKeys(obj, allowedKeys) {
+  const result = {};
+  for (const key of allowedKeys) {
+    if (key in obj) result[key] = obj[key];
+  }
+  return result;
+}
 
-  // --- Events ---
-  if (Array.isArray(analysis.events) && analysis.events.length > 0) {
-    jobs.push((async () => {
-      try {
-        const attendeesSource = settings.attendeesSource || "from_to";
-        const attendeesStatic = settings.attendeesStatic || "";
-        const attendeeHints   = buildAttendeesHint(message, attendeesSource, attendeesStatic);
-        const calendarUseCategory = !!settings.calendarUseCategory;
-        let categories = null;
-        if (calendarUseCategory) {
-          try { categories = await browser.CalendarTools.getCategories(); } catch {}
-        }
-        const wantAiDescription = (settings.descriptionFormat || "body_from_subject") === "ai_summary";
-        const allIndices = analysis.events.map((_, i) => i);
-        const prompt = buildCalendarArrayPrompt(
-          emailBody, subject, mailDatetime, currentDt, attendeeHints,
-          categories, wantAiDescription, analysis.events, allIndices
-        );
-        const raw = await callOllama(host, model, prompt, autoAnalyzeOpts(settings, 16384, 12288));
-        const jsonStr = extractJSON(raw);
-        const parsed = JSON.parse(jsonStr);
-        const events = parsed.events || [parsed];
-        events.forEach(evt => applyEventSettings(evt, message, emailBody, settings));
-        cache.events = { data: events, error: null };
-        browser.runtime.sendMessage({ batchReady: true, group: "events", success: true }).catch(() => {});
-      } catch (e) {
-        console.warn("[ThunderClerk-AI] Batch events failed:", e.message);
-        cache.events = { data: null, error: e.message };
-        browser.runtime.sendMessage({ batchReady: true, group: "events", success: false, error: e.message }).catch(() => {});
-      }
-    })());
+// Prepare analysis data from a cached combined extraction result.
+// Applies current user settings at display time so cached data stays
+// settings-independent.
+function prepareCachedAnalysis(cached, message, emailBody, settings) {
+  const raw = cached.raw;
+  const analysis = {
+    summary: raw.summary || message.subject || "(no summary)",
+    _fromCache: true,
+    _cacheTimestamp: cached.ts,
+  };
+
+  // Events — strip to API-safe keys, keep preview for display, apply settings
+  if (Array.isArray(raw.events) && raw.events.length > 0) {
+    analysis.events = raw.events.map(evt => {
+      const copy = pickKeys(evt, CALENDAR_API_KEYS);
+      copy.preview = evt.preview || "";
+      applyEventSettings(copy, message, emailBody, settings);
+      return copy;
+    });
   }
 
-  // --- Tasks (detected by analysis) ---
-  if (Array.isArray(analysis.tasks) && analysis.tasks.length > 0) {
-    jobs.push((async () => {
-      try {
-        const taskUseCategory = !!settings.taskUseCategory;
-        let categories = null;
-        if (taskUseCategory) {
-          try { categories = await browser.CalendarTools.getCategories(); } catch {}
-        }
-        const wantAiDescription = (settings.taskDescriptionFormat || "body_from_subject") === "ai_summary";
-        const allIndices = analysis.tasks.map((_, i) => i);
-        const prompt = buildTaskArrayPrompt(
-          emailBody, subject, mailDatetime, currentDt,
-          categories, wantAiDescription, analysis.tasks, allIndices
-        );
-        const raw = await callOllama(host, model, prompt, autoAnalyzeOpts(settings, 16384, 12288));
-        const jsonStr = extractJSON(raw);
-        const parsed = JSON.parse(jsonStr);
-        const tasks = parsed.tasks || [parsed];
-        tasks.forEach(task => applyTaskSettings(task, message, emailBody, settings));
-        cache.tasks = { data: tasks, error: null };
-        browser.runtime.sendMessage({ batchReady: true, group: "tasks", success: true }).catch(() => {});
-      } catch (e) {
-        console.warn("[ThunderClerk-AI] Batch tasks failed:", e.message);
-        cache.tasks = { data: null, error: e.message };
-        browser.runtime.sendMessage({ batchReady: true, group: "tasks", success: false, error: e.message }).catch(() => {});
-      }
-    })());
+  // Tasks — strip to API-safe keys, keep preview for display, apply settings
+  if (Array.isArray(raw.tasks) && raw.tasks.length > 0) {
+    analysis.tasks = raw.tasks.map(task => {
+      const copy = pickKeys(task, TASK_API_KEYS);
+      copy.preview = task.preview || "";
+      applyTaskSettings(copy, message, emailBody, settings);
+      return copy;
+    });
   }
 
-  // --- Contacts ---
-  if (Array.isArray(analysis.contacts) && analysis.contacts.length > 0) {
-    jobs.push((async () => {
-      try {
-        const allIndices = analysis.contacts.map((_, i) => i);
-        const prompt = buildContactArrayPrompt(
-          emailBody, subject, author, analysis.contacts, allIndices
-        );
-        const raw = await callOllama(host, model, prompt, autoAnalyzeOpts(settings, 8192, 4096));
-        const jsonStr = extractJSON(raw);
-        const parsed = JSON.parse(jsonStr);
-        const contacts = parsed.contacts || [parsed];
-        cache.contacts = { data: contacts, error: null };
-        browser.runtime.sendMessage({ batchReady: true, group: "contacts", success: true }).catch(() => {});
-      } catch (e) {
-        console.warn("[ThunderClerk-AI] Batch contacts failed:", e.message);
-        cache.contacts = { data: null, error: e.message };
-        browser.runtime.sendMessage({ batchReady: true, group: "contacts", success: false, error: e.message }).catch(() => {});
-      }
-    })());
+  // Contacts — pass through as-is (not sent to CalendarTools API)
+  if (Array.isArray(raw.contacts) && raw.contacts.length > 0) {
+    analysis.contacts = raw.contacts;
   }
 
-  // --- Quick Actions (always run, independent of detected items) ---
+  // Reply
+  const reply = (raw.reply || "").trim();
+  if (reply) {
+    analysis._replyBody = reply;
+  } else {
+    analysis._replyFailed = true;
+  }
 
-  // quickCalendar: standalone calendar extraction
-  jobs.push((async () => {
-    try {
-      const attendeesSource = settings.attendeesSource || "from_to";
-      const attendeesStatic = settings.attendeesStatic || "";
-      const attendeeHints   = buildAttendeesHint(message, attendeesSource, attendeesStatic);
-      const calendarUseCategory = !!settings.calendarUseCategory;
-      let categories = null;
-      if (calendarUseCategory) {
-        try { categories = await browser.CalendarTools.getCategories(); } catch {}
-      }
-      const wantAiDescription = (settings.descriptionFormat || "body_from_subject") === "ai_summary";
-      const prompt = buildCalendarPrompt(emailBody, subject, mailDatetime, currentDt, attendeeHints, categories, wantAiDescription);
-      const raw = await callOllama(host, model, prompt, autoAnalyzeOpts(settings, 8192, 4096));
-      const jsonStr = extractJSON(raw);
-      const parsed = JSON.parse(jsonStr);
-      applyEventSettings(parsed, message, emailBody, settings);
-      cache.quickCalendar = { data: parsed, error: null };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickCalendar", success: true }).catch(() => {});
-    } catch (e) {
-      console.warn("[ThunderClerk-AI] Batch quickCalendar failed:", e.message);
-      cache.quickCalendar = { data: null, error: e.message };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickCalendar", success: false, error: e.message }).catch(() => {});
-    }
-  })());
+  // Tags, forward summary — store for quick actions
+  analysis._cachedTags = Array.isArray(raw.tags) ? raw.tags : [];
+  analysis._cachedForwardSummary = (raw.forwardSummary || "").trim();
 
-  // quickTask: standalone task extraction
-  jobs.push((async () => {
-    try {
-      const taskUseCategory = !!settings.taskUseCategory;
-      let categories = null;
-      if (taskUseCategory) {
-        try { categories = await browser.CalendarTools.getCategories(); } catch {}
-      }
-      const taskDescriptionFormat = settings.taskDescriptionFormat || "body_from_subject";
-      const wantAiDescription = taskDescriptionFormat === "ai_summary";
-      const prompt = buildTaskPrompt(emailBody, subject, mailDatetime, currentDt, categories, wantAiDescription);
-      const raw = await callOllama(host, model, prompt, autoAnalyzeOpts(settings, 8192, 4096));
-      const jsonStr = extractJSON(raw);
-      const parsed = JSON.parse(jsonStr);
-      applyTaskSettings(parsed, message, emailBody, settings);
-      cache.quickTask = { data: parsed, error: null };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickTask", success: true }).catch(() => {});
-    } catch (e) {
-      console.warn("[ThunderClerk-AI] Batch quickTask failed:", e.message);
-      cache.quickTask = { data: null, error: e.message };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickTask", success: false, error: e.message }).catch(() => {});
-    }
-  })());
-
-  // quickContact: standalone contact extraction
-  jobs.push((async () => {
-    try {
-      const prompt = buildContactPrompt(emailBody, subject, author);
-      const raw = await callOllama(host, model, prompt, autoAnalyzeOpts(settings, 8192, 4096));
-      const jsonStr = extractJSON(raw);
-      const parsed = JSON.parse(jsonStr);
-      cache.quickContact = { data: parsed, error: null };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickContact", success: true }).catch(() => {});
-    } catch (e) {
-      console.warn("[ThunderClerk-AI] Batch quickContact failed:", e.message);
-      cache.quickContact = { data: null, error: e.message };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickContact", success: false, error: e.message }).catch(() => {});
-    }
-  })());
-
-  // quickForward: pre-cache summary for Summarize & Forward
-  jobs.push((async () => {
-    try {
-      const prompt = buildSummarizeForwardPrompt(emailBody, subject, author);
-      const raw = await callOllama(host, model, prompt, autoAnalyzeOpts(settings, 8192, 4096));
-      const jsonStr = extractJSON(raw);
-      const parsed = JSON.parse(jsonStr);
-      const summary = (parsed.summary || "").trim();
-      cache.quickForward = { data: summary || null, error: summary ? null : "Empty summary" };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickForward", success: !!summary }).catch(() => {});
-    } catch (e) {
-      console.warn("[ThunderClerk-AI] Batch quickForward failed:", e.message);
-      cache.quickForward = { data: null, error: e.message };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickForward", success: false, error: e.message }).catch(() => {});
-    }
-  })());
-
-  // quickCatalog: pre-cache AI tags
-  jobs.push((async () => {
-    try {
-      const existingTags = await browser.messages.tags.list();
-      const existingTagNames = existingTags.map(t => t.tag);
-      const prompt = buildCatalogPrompt(emailBody, subject, author, existingTagNames);
-      const raw = await callOllama(host, model, prompt, autoAnalyzeOpts(settings, 8192, 2048));
-      const jsonStr = extractJSON(raw);
-      const parsed = JSON.parse(jsonStr);
-      cache.quickCatalog = { data: { aiTags: parsed.tags, existingTags }, error: null };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickCatalog", success: true }).catch(() => {});
-    } catch (e) {
-      console.warn("[ThunderClerk-AI] Batch quickCatalog failed:", e.message);
-      cache.quickCatalog = { data: null, error: e.message };
-      browser.runtime.sendMessage({ batchReady: true, group: "quickCatalog", success: false, error: e.message }).catch(() => {});
-    }
-  })());
-
-  await Promise.allSettled(jobs);
+  return analysis;
 }
 
 async function handleAutoAnalyze(message, emailBody, settings) {
+  // --- Cache-first path: serve instantly from background processor cache ---
+  try {
+    const cached = await cacheGet(message.id);
+    if (cached && cached.raw) {
+      return await handleAutoAnalyzeCached(cached, message, emailBody, settings);
+    }
+  } catch (e) {
+    console.warn("[ThunderClerk-AI] Cache check failed, falling back to live:", e.message);
+  }
+
+  // --- Cache miss: run single combined prompt (same as background processor) ---
   const host   = settings.ollamaHost  || DEFAULT_HOST;
   const model  = settings.ollamaModel || DEFAULTS.ollamaModel;
   const author = message.author || "";
@@ -1022,87 +829,65 @@ async function handleAutoAnalyze(message, emailBody, settings) {
   const mailDatetime = formatDatetime(message.date);
   const currentDt    = currentDatetime();
 
-  // Stage 1: get summary + detected item previews (+ reply in parallel)
   const MAX_ANALYSIS_BODY = 12000;
   let analysisBody = emailBody;
   if (analysisBody.length > MAX_ANALYSIS_BODY) {
     analysisBody = analysisBody.slice(0, MAX_ANALYSIS_BODY) +
       "\n\n[… email truncated — there may be additional items beyond this point]";
   }
-  const analysisPrompt = buildAnalysisPrompt(analysisBody, subject, author, mailDatetime, currentDt);
-  const replyPrompt = buildDraftReplyPrompt(emailBody, subject, author);
+
+  const attendeesSource = settings.attendeesSource || "from_to";
+  const attendeesStatic = settings.attendeesStatic || "";
+  const attendeeHints   = buildAttendeesHint(message, attendeesSource, attendeesStatic);
+  const calendarUseCategory = !!settings.calendarUseCategory;
+  let categories = null;
+  if (calendarUseCategory) {
+    try { categories = await browser.CalendarTools.getCategories(); } catch {}
+  }
+  let existingTags = [];
+  try {
+    const tags = await browser.messages.tags.list();
+    existingTags = tags.map(t => t.tag);
+  } catch {}
+
+  const prompt = buildCombinedExtractionPrompt(
+    analysisBody, subject, author, mailDatetime, currentDt,
+    attendeeHints, categories, existingTags
+  );
 
   if (settings && settings.debugPromptPreview) {
-    await previewPrompt(analysisPrompt);
+    await previewPrompt(prompt);
   }
 
-  // Fire analysis and reply generation in parallel
-  const analysisTask = (async () => {
-    const MAX_ANALYSIS_ATTEMPTS = 2;
-    for (let attempt = 1; attempt <= MAX_ANALYSIS_ATTEMPTS; attempt++) {
-      const actionLabel = attempt === 1
-        ? "analyze the email"
-        : `retry analysis (attempt ${attempt})`;
-      const progress = createProgressNotifier(actionLabel, model);
-      progress.start();
+  const progress = createProgressNotifier("analyze the email", model);
+  progress.start();
 
-      let rawResponse;
-      try {
-        rawResponse = await callOllama(host, model, analysisPrompt, autoAnalyzeOpts(settings, 16384, 12288));
-      } catch (e) {
-        progress.stop();
-        if (attempt === MAX_ANALYSIS_ATTEMPTS) throw e;
-        console.warn(`[ThunderClerk-AI] Analysis attempt ${attempt} failed:`, e.message);
-        continue;
-      }
-      progress.stop();
-
-      let result = null;
-      try {
-        const jsonStr = extractJSON(rawResponse);
-        result = JSON.parse(jsonStr);
-      } catch {
-        console.warn("[ThunderClerk-AI] Analysis raw response (first 2000 chars):", rawResponse?.substring(0, 2000));
-        console.warn("[ThunderClerk-AI] Analysis raw response (last 500 chars):", rawResponse?.slice(-500));
-        result = repairAnalysisJSON(rawResponse);
-        if (result) {
-          console.log("[ThunderClerk-AI] Repaired truncated analysis JSON — got", Object.keys(result).join(", "));
-        }
-      }
-
-      if (result) return result;
-      console.warn(`[ThunderClerk-AI] Analysis attempt ${attempt} produced invalid JSON, retrying…`);
-    }
-    throw new Error("invalid JSON in analysis response (all attempts failed)");
-  })();
-
-  const replyTask = (async () => {
-    try {
-      const rawReply = await callOllama(host, model, replyPrompt, autoAnalyzeOpts(settings, 8192, 4096));
-      const jsonStr = extractJSON(rawReply);
-      const parsed = JSON.parse(jsonStr);
-      return (parsed.body || "").trim() || null;
-    } catch (e) {
-      console.warn("[ThunderClerk-AI] Reply generation failed (non-fatal):", e.message);
-      return null;
-    }
-  })();
-
-  const [analysisResult, replyResult] = await Promise.allSettled([analysisTask, replyTask]);
-
-  if (analysisResult.status === "rejected") {
-    throw analysisResult.reason;
+  let rawResponse;
+  try {
+    rawResponse = await callOllama(host, model, prompt, autoAnalyzeOpts(settings, 16384, 16384));
+  } finally {
+    progress.stop();
   }
 
-  const analysis = analysisResult.value;
-  const replyBody = replyResult.status === "fulfilled" ? replyResult.value : null;
+  let parsed = null;
+  try {
+    const jsonStr = extractJSON(rawResponse);
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    parsed = repairAnalysisJSON(rawResponse);
+    if (parsed) {
+      console.log("[ThunderClerk-AI] Repaired truncated analysis JSON — got", Object.keys(parsed).join(", "));
+    }
+  }
 
-  if (!analysis.summary) analysis.summary = subject;
+  if (!parsed) {
+    throw new Error("invalid JSON in analysis response");
+  }
 
-  // Normalize items — LLMs may return different key names for the preview
+  // Normalize previews — LLMs may return different key names
   for (const key of ["events", "tasks", "contacts"]) {
-    if (Array.isArray(analysis[key])) {
-      analysis[key] = analysis[key].map(item => {
+    if (Array.isArray(parsed[key])) {
+      parsed[key] = parsed[key].map(item => {
         if (typeof item === "string") return { preview: item };
         if (!item.preview) {
           item.preview = item.title || item.name || item.description
@@ -1113,26 +898,74 @@ async function handleAutoAnalyze(message, emailBody, settings) {
     }
   }
 
-  // Attach reply body so the dialog can display it (or flag failure)
-  if (replyBody) {
-    analysis._replyBody = replyBody;
-  } else {
-    analysis._replyFailed = true;
-  }
+  // Cache the result, then display via the cached path
+  await cacheSet(message.id, parsed);
+  const cachedEntry = await cacheGet(message.id);
+  return await handleAutoAnalyzeCached(cachedEntry, message, emailBody, settings);
+}
 
-  // Extraction cache — populated by batch pre-extraction, consumed by item clicks
+// Handle Auto Analyze with cached data — instant display, no Ollama calls.
+async function handleAutoAnalyzeCached(cached, message, emailBody, settings) {
+  const analysis = prepareCachedAnalysis(cached, message, emailBody, settings);
+  const replyBody = analysis._replyBody || null;
+
+  // Pre-build extraction cache from cached data for button clicks
   const extractionCache = {};
 
-  // Register scoped listener for item button clicks, reply usage, and dialog readiness
-  const itemListener = async (msg, sender, sendResponse) => {
+  if (Array.isArray(analysis.events) && analysis.events.length > 0) {
+    extractionCache.events = { data: analysis.events, error: null };
+  }
+  if (Array.isArray(analysis.tasks) && analysis.tasks.length > 0) {
+    extractionCache.tasks = { data: analysis.tasks, error: null };
+  }
+  if (Array.isArray(analysis.contacts) && analysis.contacts.length > 0) {
+    extractionCache.contacts = { data: analysis.contacts, error: null };
+  }
+
+  // Quick actions from cached data
+  if (analysis.events?.length > 0) {
+    extractionCache.quickCalendar = { data: analysis.events[0], error: null };
+  }
+  if (analysis.tasks?.length > 0) {
+    extractionCache.quickTask = { data: analysis.tasks[0], error: null };
+  }
+  if (analysis.contacts?.length > 0) {
+    extractionCache.quickContact = { data: analysis.contacts[0], error: null };
+  }
+  if (analysis._cachedForwardSummary) {
+    extractionCache.quickForward = { data: analysis._cachedForwardSummary, error: null };
+  }
+  if (analysis._cachedTags?.length > 0) {
+    try {
+      const existingTags = await browser.messages.tags.list();
+      extractionCache.quickCatalog = { data: { aiTags: analysis._cachedTags, existingTags }, error: null };
+    } catch {}
+  }
+
+  // Register scoped listener for item button clicks, reply usage, and refresh
+  const itemListener = async (msg) => {
     if (!msg) return;
 
-    // Dialog signals it's ready — kick off batch pre-extractions
+    // Refresh button — delete cache, re-run combined prompt, re-display
+    if (msg.analyzeAction === "refresh") {
+      try {
+        await cacheDelete(message.id);
+        browser.runtime.onMessage.removeListener(itemListener);
+        await handleAutoAnalyze(message, emailBody, settings);
+      } catch (e) {
+        console.error("[ThunderClerk-AI] Refresh failed:", e.message);
+        notifyError("Refresh error", e.message);
+      }
+      return;
+    }
+
+    // Dialog signals ready — for cached data, immediately send all batch-ready signals
     if (msg.analyzeAction === "dialogReady") {
-      runBatchExtractions(analysis, message, emailBody, settings, extractionCache).catch(e => {
-        console.error("[ThunderClerk-AI] Batch extraction error:", e.message);
-        browser.runtime.sendMessage({ batchError: true, error: e.message }).catch(() => {});
-      });
+      for (const group of ["events", "tasks", "contacts", "quickCalendar", "quickTask", "quickContact", "quickForward", "quickCatalog"]) {
+        if (extractionCache[group]) {
+          browser.runtime.sendMessage({ batchReady: true, group, success: true }).catch(() => {});
+        }
+      }
       return;
     }
 
@@ -1141,10 +974,10 @@ async function handleAutoAnalyze(message, emailBody, settings) {
       const index = msg.index;
 
       try {
-        // --- Quick Actions (standalone whole-email operations) ---
+        // Quick Actions
         if (group === "quickCalendar") {
           if (extractionCache.quickCalendar?.data) {
-            await browser.CalendarTools.openCalendarDialog(extractionCache.quickCalendar.data);
+            await browser.CalendarTools.openCalendarDialog(pickKeys(extractionCache.quickCalendar.data, CALENDAR_API_KEYS));
           } else {
             await handleCalendar(message, emailBody, settings);
           }
@@ -1153,7 +986,7 @@ async function handleAutoAnalyze(message, emailBody, settings) {
         }
         if (group === "quickTask") {
           if (extractionCache.quickTask?.data) {
-            await browser.CalendarTools.openTaskDialog(extractionCache.quickTask.data);
+            await browser.CalendarTools.openTaskDialog(pickKeys(extractionCache.quickTask.data, TASK_API_KEYS));
           } else {
             await handleTask(message, emailBody, settings);
           }
@@ -1220,7 +1053,6 @@ async function handleAutoAnalyze(message, emailBody, settings) {
                   tagKeys.push(key);
                   appliedNames.push(name);
                 } catch (e) {
-                  console.warn("[ThunderClerk-AI] Could not create tag:", e.message);
                   const retry = existingTags.find(t => t.key === key);
                   if (retry) {
                     tagKeys.push(retry.key);
@@ -1247,17 +1079,16 @@ async function handleAutoAnalyze(message, emailBody, settings) {
           return;
         }
 
-        // --- Detected items (events, tasks, contacts) ---
-        const cached = extractionCache[group]?.data?.[index];
-        if (cached) {
-          // Use cached data — open native dialog directly
+        // Detected items (events, tasks, contacts)
+        const cachedItem = extractionCache[group]?.data?.[index];
+        if (cachedItem) {
           if (group === "events") {
-            await browser.CalendarTools.openCalendarDialog(cached);
+            await browser.CalendarTools.openCalendarDialog(pickKeys(cachedItem, CALENDAR_API_KEYS));
           } else if (group === "tasks") {
-            await browser.CalendarTools.openTaskDialog(cached);
+            await browser.CalendarTools.openTaskDialog(pickKeys(cachedItem, TASK_API_KEYS));
           } else if (group === "contacts") {
             await browser.storage.local.set({
-              pendingContact: cached,
+              pendingContact: cachedItem,
               contactAddressBook: settings.contactAddressBook || "",
             });
             await new Promise((resolve) => {
@@ -1279,12 +1110,11 @@ async function handleAutoAnalyze(message, emailBody, settings) {
           }
           browser.runtime.sendMessage({ analyzeItemResult: true, group, index, success: true }).catch(() => {});
         } else {
-          // Cache miss — fall back to live single-item extraction
-          await processSingleItem(group, index, message, emailBody, settings, analysis);
-          browser.runtime.sendMessage({ analyzeItemResult: true, group, index, success: true }).catch(() => {});
+          notifyError("Item not available", "Item data not available — try refreshing.");
+          browser.runtime.sendMessage({ analyzeItemResult: true, group, index, success: false, error: "Item data not available" }).catch(() => {});
         }
       } catch (e) {
-        console.error(`[ThunderClerk-AI] Item extraction failed (${group}[${index}]):`, e.message);
+        console.error(`[ThunderClerk-AI] Cached item action failed (${group}[${index}]):`, e.message);
         browser.runtime.sendMessage({ analyzeItemResult: true, group, index, success: false, error: e.message }).catch(() => {});
       }
       return;
@@ -1303,12 +1133,8 @@ async function handleAutoAnalyze(message, emailBody, settings) {
   browser.runtime.onMessage.addListener(itemListener);
 
   try {
-    // Open dialog for user to interact with items via buttons
     const selections = await openAnalyzeDialog(analysis);
-
-    if (!selections) return; // cancelled
-
-    // Execute archive/delete checkboxes
+    if (!selections) return;
     await executeAnalysisSelections(message, selections);
   } finally {
     browser.runtime.onMessage.removeListener(itemListener);
@@ -1325,6 +1151,28 @@ browser.menus.onClicked.addListener(async (info, tab) => {
     notifyError("No message selected", "Please select a message first.");
     return;
   }
+
+  // Queue for Analysis — enqueue selected messages and return early
+  if (info.menuItemId === "thunderclerk-ai-queue-analysis") {
+    const status = bgProcessorGetStatus();
+    if (!status.enabled) {
+      notifyError("Background processing disabled",
+        "Enable both Auto Analyze and background processing in settings.");
+      return;
+    }
+    let queued = 0;
+    for (const msg of messages) {
+      bgProcessorEnqueue(msg.id);
+      queued++;
+    }
+    browser.notifications.create({
+      type: "basic",
+      title: "ThunderClerk-AI",
+      message: `Queued ${queued} message${queued === 1 ? "" : "s"} for analysis`,
+    }).catch(() => {});
+    return;
+  }
+
   const message = messages[0];
 
   // Load settings
@@ -1347,6 +1195,11 @@ browser.menus.onClicked.addListener(async (info, tab) => {
   // Dispatch to the appropriate handler
   const isCatalog = info.menuItemId === "thunderclerk-ai-catalog-email";
   const isAutoAnalyze = info.menuItemId === "thunderclerk-ai-auto-analyze";
+
+  // Pause background processing while a manual action runs
+  const needsManualFlag = !isAutoAnalyze;
+  if (needsManualFlag) bgProcessorSetManualFlag(true);
+
   try {
     if (info.menuItemId === "thunderclerk-ai-add-calendar") {
       await handleCalendar(message, emailBody, settings);
@@ -1381,6 +1234,8 @@ browser.menus.onClicked.addListener(async (info, tab) => {
     } else {
       notifyError("Error", e.message);
     }
+  } finally {
+    if (needsManualFlag) bgProcessorSetManualFlag(false);
   }
 });
 
@@ -1436,3 +1291,38 @@ browser.commands.onCommand.addListener(async (command) => {
     }
   }
 });
+
+// --- Background processor status handler ---
+
+browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.action === "getBgStatus") {
+    (async () => {
+      const status = bgProcessorGetStatus();
+      const stats = await cacheGetStats();
+      sendResponse({ ...status, ...stats });
+    })();
+    return true;
+  }
+  if (msg && msg.action === "clearBgCache") {
+    (async () => {
+      const removed = await cacheClearAll();
+      console.log(`[ThunderClerk-AI] Cache cleared: ${removed} entries removed`);
+      sendResponse({ removed });
+    })();
+    return true;
+  }
+  if (msg && msg.action === "stopBgProcessor") {
+    bgProcessorStop();
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (msg && msg.action === "startBgProcessor") {
+    bgProcessorStart();
+    sendResponse({ ok: true });
+    return true;
+  }
+});
+
+// --- Initialize background processor ---
+
+initBgProcessor();

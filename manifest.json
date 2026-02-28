@@ -29,6 +29,7 @@
     "addressBooks",
     "messagesMove",
     "messagesDelete",
+    "accountsRead",
     "<all_urls>"
   ],
 
@@ -49,7 +50,7 @@
   },
 
   "background": {
-    "scripts": ["config.js", "utils.js", "background.js"]
+    "scripts": ["config.js", "utils.js", "cache.js", "processor.js", "background.js"]
   },
 
   "commands": {

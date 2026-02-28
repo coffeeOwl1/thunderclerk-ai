@@ -237,6 +237,32 @@
     If results look wrong, enable <em>"Show prompt preview"</em> in the Debug section below and check the raw AI output for issues.
   </div>
 
+  <!-- Background Processing -->
+  <h3>Background Processing</h3>
+
+  <div class="checkbox-row">
+    <input type="checkbox" id="bgProcessingEnabled" />
+    <label for="bgProcessingEnabled">Process emails in the background</label>
+  </div>
+  <div class="hint">Automatically analyze incoming emails so results are instant when you open Auto Analyze. Requires Auto Analyze to be enabled.</div>
+
+  <label for="bgCacheMaxDays">Cache duration</label>
+  <select id="bgCacheMaxDays">
+    <option value="1">1 day (default)</option>
+    <option value="3">3 days</option>
+    <option value="7">7 days</option>
+    <option value="14">14 days</option>
+    <option value="30">30 days</option>
+  </select>
+  <div class="hint">How long to keep cached analysis results. Older entries are automatically cleaned up.</div>
+
+  <div id="bg-stats" style="margin-top:10px; padding:8px 10px; background:#f0f4ff; border:1px solid #c5d0f0; border-radius:4px; font-size:12px; color:#333; line-height:2;">
+    <span id="bg-stats-text"></span><br>
+    <button id="bg-stop-btn" style="padding:2px 10px; font-size:11px; cursor:pointer; border-radius:3px; border:1px solid #c5d0f0; background:#fff;">Stop</button>
+    <button id="bg-start-btn" style="padding:2px 10px; font-size:11px; cursor:pointer; border-radius:3px; border:1px solid #c5d0f0; background:#fff;">Start</button>
+    <button id="clear-cache-btn" style="padding:2px 10px; font-size:11px; cursor:pointer; border-radius:3px; border:1px solid #c5d0f0; background:#fff;">Clear Cache</button>
+  </div>
+
   <!-- Debug -->
   <h3>Debug</h3>
 

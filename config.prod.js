@@ -23,6 +23,9 @@ const DEFAULTS = {
   allowNewTags:          false,
   // Auto Analyze settings
   autoAnalyzeEnabled:    false,
+  // Background processing settings
+  bgProcessingEnabled:   false,
+  bgCacheMaxDays:        1,
   // LLM parameter settings
   numCtx:                0,              // 0 = use model default
   numPredict:            0,              // 0 = use model default

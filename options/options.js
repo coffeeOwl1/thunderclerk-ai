@@ -145,6 +145,58 @@ function syncAttendeesUI(source) {
     source === "static" ? "block" : "none";
 }
 
+// --- Background Processing UI sync ---
+
+function syncBgProcessingUI(autoAnalyzeEnabled) {
+  const bgCheckbox = document.getElementById("bgProcessingEnabled");
+  const bgSelect = document.getElementById("bgCacheMaxDays");
+
+  if (!autoAnalyzeEnabled) {
+    bgCheckbox.disabled = true;
+    bgSelect.disabled = true;
+    bgCheckbox.parentElement.style.opacity = "0.5";
+  } else {
+    bgCheckbox.disabled = false;
+    bgSelect.disabled = false;
+    bgCheckbox.parentElement.style.opacity = "";
+  }
+
+  updateBgStats();
+}
+
+async function updateBgStats() {
+  const statsEl = document.getElementById("bg-stats");
+  const statsText = document.getElementById("bg-stats-text");
+  const stopBtn = document.getElementById("bg-stop-btn");
+  const startBtn = document.getElementById("bg-start-btn");
+
+  try {
+    const status = await browser.runtime.sendMessage({ action: "getBgStatus" });
+    if (!status) {
+      statsEl.style.display = "none";
+      return;
+    }
+    const parts = [];
+    if (status.count !== undefined) parts.push(`Cached: ${status.count} emails`);
+    if (status.queueLength > 0) parts.push(`Queued: ${status.queueLength}`);
+    if (status.processing) parts.push("processing…");
+    if (status.processedCount > 0) parts.push(`Processed this session: ${status.processedCount}`);
+    if (status.errorCount > 0) parts.push(`Errors: ${status.errorCount}`);
+    if (status.paused) parts.push("(paused — Ollama unreachable)");
+    if (!status.enabled) parts.push("(stopped)");
+
+    statsText.textContent = parts.length > 0 ? parts.join(" | ") : "No cached data";
+    statsEl.style.display = "block";
+
+    // Toggle Stop/Start button states
+    stopBtn.disabled = !status.enabled;
+    startBtn.disabled = status.enabled;
+  } catch (e) {
+    console.warn("[ThunderClerk-AI Settings] updateBgStats failed:", e.message);
+    statsEl.style.display = "none";
+  }
+}
+
 // --- VRAM estimation ---
 
 function formatBytes(bytes) {
@@ -286,7 +338,12 @@ async function restoreOptions() {
   document.getElementById("autoTagAfterAction").checked      = !!s.autoTagAfterAction;
   document.getElementById("allowNewTags").checked            = !!s.allowNewTags;
   document.getElementById("autoAnalyzeEnabled").checked      = !!s.autoAnalyzeEnabled;
+  document.getElementById("bgProcessingEnabled").checked     = !!s.bgProcessingEnabled;
+  document.getElementById("bgCacheMaxDays").value            = String(s.bgCacheMaxDays || 1);
   document.getElementById("debugPromptPreview").checked     = !!s.debugPromptPreview;
+
+  // Sync background processing UI state
+  syncBgProcessingUI(!!s.autoAnalyzeEnabled);
   document.getElementById("numCtx").value        = String(s.numCtx || 0);
   document.getElementById("numPredict").value    = String(s.numPredict || 0);
 
@@ -347,6 +404,8 @@ async function saveOptions() {
     autoTagAfterAction:    document.getElementById("autoTagAfterAction").checked,
     allowNewTags:          document.getElementById("allowNewTags").checked,
     autoAnalyzeEnabled:    document.getElementById("autoAnalyzeEnabled").checked,
+    bgProcessingEnabled:   document.getElementById("bgProcessingEnabled").checked,
+    bgCacheMaxDays:        Number(document.getElementById("bgCacheMaxDays").value) || 1,
     numCtx:                Number(document.getElementById("numCtx").value) || 0,
     numPredict:            Number(document.getElementById("numPredict").value) || 0,
     debugPromptPreview:    document.getElementById("debugPromptPreview").checked,
@@ -378,6 +437,9 @@ document.addEventListener("DOMContentLoaded", () => {
   maybeShowFirstRunNotice();
   restoreOptions();
 
+  // Auto-refresh stats every 2 seconds so you can watch progress
+  setInterval(updateBgStats, 2000);
+
   document.getElementById("attendeesSource").addEventListener("change", e =>
     syncAttendeesUI(e.target.value));
 
@@ -402,6 +464,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("autoAnalyzeEnabled").addEventListener("change", () => {
     updateVramEstimate();
+    syncBgProcessingUI(document.getElementById("autoAnalyzeEnabled").checked);
   });
 
   document.getElementById("refresh-calendars").addEventListener("click", async () => {
@@ -412,6 +475,37 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("refresh-addressbooks").addEventListener("click", async () => {
     const sel = document.getElementById("contactAddressBook");
     await populateAddressBooks(sel, sel.value);
+  });
+
+  document.getElementById("bg-stop-btn").addEventListener("click", async () => {
+    await browser.runtime.sendMessage({ action: "stopBgProcessor" });
+    await updateBgStats();
+  });
+
+  document.getElementById("bg-start-btn").addEventListener("click", async () => {
+    await browser.runtime.sendMessage({ action: "startBgProcessor" });
+    await updateBgStats();
+  });
+
+  document.getElementById("clear-cache-btn").addEventListener("click", async () => {
+    const btn = document.getElementById("clear-cache-btn");
+    btn.disabled = true;
+    btn.textContent = "Clearing\u2026";
+    try {
+      const result = await browser.runtime.sendMessage({ action: "clearBgCache" });
+      btn.textContent = `Cleared ${result.removed} entries`;
+      await updateBgStats();
+      setTimeout(() => {
+        btn.textContent = "Clear Cache";
+        btn.disabled = false;
+      }, 2000);
+    } catch {
+      btn.textContent = "Error";
+      setTimeout(() => {
+        btn.textContent = "Clear Cache";
+        btn.disabled = false;
+      }, 2000);
+    }
   });
 
   document.getElementById("save-btn").addEventListener("click", saveOptions);

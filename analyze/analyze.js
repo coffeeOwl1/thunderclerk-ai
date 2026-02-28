@@ -9,6 +9,27 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   const analysis = pendingAnalysis;
+  const isFromCache = !!analysis._fromCache;
+
+  // --- Show cache age and Refresh button when showing cached data ---
+  if (isFromCache && analysis._cacheTimestamp) {
+    const cacheAgeEl = document.getElementById("cache-age");
+    const refreshBtn = document.getElementById("refresh-btn");
+    cacheAgeEl.textContent = formatCacheAge(analysis._cacheTimestamp);
+    cacheAgeEl.style.display = "";
+    refreshBtn.style.display = "";
+
+    refreshBtn.addEventListener("click", async () => {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = "Refreshing\u2026";
+      await browser.runtime.sendMessage({ analyzeAction: "refresh" });
+      // The background will close and reopen the dialog; if it doesn't, restore button
+      setTimeout(() => {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = "Refresh";
+      }, 5000);
+    });
+  }
 
   // --- Render summary ---
   document.getElementById("summary").textContent = analysis.summary || "(no summary)";
@@ -49,11 +70,21 @@ document.addEventListener("DOMContentLoaded", async () => {
       text.textContent = previewText || `${group.label} item ${idx + 1}`;
 
       const btn = document.createElement("button");
-      btn.className = "add-btn processing";
-      btn.textContent = "Waiting\u2026";
-      btn.disabled = true;
       btn.dataset.group = group.key;
       btn.dataset.index = idx;
+
+      if (isFromCache) {
+        // Cached data — buttons are immediately active
+        btn.className = "add-btn";
+        btn.textContent = "Add";
+        btn.disabled = false;
+      } else {
+        // Live data — buttons start as waiting
+        btn.className = "add-btn processing";
+        btn.textContent = "Waiting\u2026";
+        btn.disabled = true;
+      }
+
       btn.addEventListener("click", () => handleItemClick(btn, group.key, idx));
 
       row.appendChild(text);
@@ -112,12 +143,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     text.textContent = def.label;
 
     const btn = document.createElement("button");
-    btn.className = "add-btn processing";
-    btn.textContent = "Waiting\u2026";
-    btn.disabled = true;
     btn.dataset.group = def.group;
     btn.dataset.index = "0";
     btn.dataset.btnText = def.btnText;
+
+    if (isFromCache) {
+      // Cached data — buttons are immediately active
+      btn.className = "add-btn";
+      btn.textContent = def.btnText;
+      btn.disabled = false;
+    } else {
+      // Live data — buttons start as waiting
+      btn.className = "add-btn processing";
+      btn.textContent = "Waiting\u2026";
+      btn.disabled = true;
+    }
+
     btn.addEventListener("click", () => handleItemClick(btn, def.group, 0));
 
     row.appendChild(text);
@@ -225,7 +266,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     window.close();
   });
 
-  // Signal background to start batch pre-extractions
+  // Signal background to start batch pre-extractions (or send cached readiness)
   browser.runtime.sendMessage({ analyzeAction: "dialogReady" }).catch(() => {});
 });
 
@@ -246,4 +287,16 @@ function buildSelections() {
   if (document.getElementById("archive-cb").checked) selections.archive = true;
   if (document.getElementById("delete-cb").checked) selections.delete = true;
   return selections;
+}
+
+function formatCacheAge(timestamp) {
+  const diff = Date.now() - timestamp;
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return "Cached just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `Cached ${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Cached ${hours} hr ago`;
+  const days = Math.floor(hours / 24);
+  return `Cached ${days} day${days > 1 ? "s" : ""} ago`;
 }

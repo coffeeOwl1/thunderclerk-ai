@@ -14,7 +14,8 @@ No cloud accounts, no API keys, no text selection required — just Thunderbird 
 - **Summarize & Forward** — produce a TL;DR + bullet-point summary for forwarding
 - **Extract Contact** — pull contact info from email signatures into your address book
 - **Catalog Email** — auto-tag emails using AI, with support for existing Thunderbird tags
-- **Auto Analyze** — single-click analysis: get a summary, detected events/tasks/contacts ("What I Found") as clickable Add buttons, a suggested AI reply, and five always-visible Quick Actions (create event, create task, extract contact, summarize & forward, tag email). All items are batch pre-extracted so button clicks are instant. Archive/Delete checkboxes at the bottom for post-triage cleanup. Also available via keyboard shortcut (`Ctrl+Shift+E`). Disabled by default — requires a 20B+ parameter model (see settings).
+- **Auto Analyze** — single-click analysis: get a summary, detected events/tasks/contacts ("What I Found") as clickable Add buttons, a suggested AI reply, and five always-visible Quick Actions (create event, create task, extract contact, summarize & forward, tag email). Cached results display instantly; on cache miss a single combined Ollama call runs (~30-60s) and caches the result. Archive/Delete checkboxes at the bottom for post-triage cleanup. Also available via keyboard shortcut (`Ctrl+Shift+E`). Disabled by default — requires a 20B+ parameter model (see settings).
+- **Background Processing** — automatically processes incoming emails in the background using a single combined Ollama call. Results are cached persistently so Auto Analyze shows results instantly (no waiting for Ollama). New emails are processed as they arrive; existing emails are backfilled on startup. Manual actions always take priority over background processing.
 - AI extracts title, dates, times, attendees, and (optionally) category
 - Reads the full email body — no need to select text first
 - All processing is done locally via your own Ollama instance
@@ -62,6 +63,8 @@ After installation the Settings page opens automatically. You can also reach it 
 | Context Window (tokens) | 0 (model default) | Override the model's context window size. Controls KV cache VRAM usage. |
 | Max Output Tokens | 0 (model default) | Override the maximum generation length. Thinking/reasoning models need 8192+. |
 | Enable Auto Analyze | Off | Show the Auto Analyze menu item and keyboard shortcut. Requires a 20B+ parameter model with at least 16 GB VRAM. Smaller models produce unreliable results. |
+| Process emails in the background | Off | Automatically analyze incoming emails so Auto Analyze results are instant. Requires Auto Analyze to be enabled. |
+| Cache duration | 1 day | How long to keep cached analysis results. Options: 1/3/7/14/30 days. |
 
 ## Keyboard Shortcuts
 
@@ -85,6 +88,7 @@ The extension requests these permissions:
 - **addressBooks** — save extracted contacts
 - **notifications** — show progress/error notifications
 - **messagesTags / messagesTagsList / messagesUpdate** — catalog/tag emails
+- **accountsRead** — listen for new mail (background processing), query messages across accounts
 
 ## Privacy
 
@@ -100,7 +104,7 @@ The CalendarTools experiment API is adapted from [ThunderAI Sparks](https://micz
 
 ```bash
 npm install        # install Jest for tests
-npm test           # unit tests (~178 cases)
+npm test           # unit tests (~189 cases)
 npm run test:integration  # integration tests (needs running Ollama)
 ```
 
