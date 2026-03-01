@@ -57,7 +57,10 @@ After installation the Settings page opens automatically. You can also reach it 
 | Event Description | Body + From + Subject | What to pre-fill in the event Description field (options: Body + From + Subject, Body only, AI-generated summary, None) |
 | Task Description | Body + From + Subject | What to pre-fill in the task Description field (options: Body + From + Subject, Body only, AI-generated summary, None) |
 | Default Due Date | None | Fallback when no deadline is found |
-| Auto-select category | Off | Ask the AI to pick the best category for events/tasks |
+| Auto-select category (events) | Off | Ask the AI to pick the best category for calendar events |
+| Auto-select category (tasks) | Off | Ask the AI to pick the best category for tasks |
+| Draft Reply Mode | Reply to sender | Whether "Draft Reply" replies to the sender only or to all recipients |
+| Default Address Book | (first available) | Which address book to save extracted contacts to |
 | Auto-tag after actions | On | Automatically tag emails after using other actions |
 | Allow new tags | Off | Let the AI create new tags (experimental — may clutter your tag list) |
 | Context Window (tokens) | 0 (model default) | Override the model's context window size. Controls KV cache VRAM usage. |
@@ -88,6 +91,7 @@ The extension requests these permissions:
 - **notifications** — show progress/error notifications
 - **messagesTags / messagesTagsList / messagesUpdate** — catalog/tag emails
 - **accountsRead** — listen for new mail (background processing), query messages across accounts
+- **\<all_urls\>** — connect to the configured Ollama host
 
 ## Privacy
 
@@ -103,7 +107,7 @@ The CalendarTools experiment API is adapted from [ThunderAI Sparks](https://micz
 
 ```bash
 npm install        # install Jest for tests
-npm test           # unit tests (~189 cases)
+npm test           # unit tests (~203 cases)
 npm run test:integration  # integration tests (needs running Ollama)
 ```
 
