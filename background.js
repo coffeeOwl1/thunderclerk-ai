@@ -48,6 +48,7 @@ const MENU_IDS = new Set([
   "thunderclerk-ai-catalog-email",
   "thunderclerk-ai-auto-analyze",
   "thunderclerk-ai-queue-analysis",
+  "thunderclerk-ai-bulk-triage",
 ]);
 
 browser.menus.create({
@@ -142,12 +143,21 @@ browser.menus.create({
   visible: false,              // hidden until enabled in settings
 });
 
+browser.menus.create({
+  id: "thunderclerk-ai-bulk-triage",
+  parentId: "thunderclerk-ai-parent",
+  title: "Bulk Triage",
+  contexts: ["message_list"],
+  visible: false,              // hidden until enabled in settings
+});
+
 // Show/hide Auto Analyze menu items and message display action button
 async function syncAutoAnalyzeVisibility() {
   const { autoAnalyzeEnabled } = await browser.storage.sync.get({ autoAnalyzeEnabled: DEFAULTS.autoAnalyzeEnabled });
   const enabled = !!autoAnalyzeEnabled;
   browser.menus.update("thunderclerk-ai-auto-analyze", { visible: enabled });
   browser.menus.update("thunderclerk-ai-queue-analysis", { visible: enabled });
+  browser.menus.update("thunderclerk-ai-bulk-triage", { visible: enabled });
   browser.menus.update("thunderclerk-ai-sep-4", { visible: enabled });
   // Show/hide the message header toolbar button
   if (enabled) {
@@ -774,6 +784,8 @@ function prepareCachedAnalysis(cached, message, emailBody, settings) {
     summary: raw.summary || message.subject || "(no summary)",
     _fromCache: true,
     _cacheTimestamp: cached.ts,
+    _subject: message.subject || "",
+    _author: message.author || "",
   };
 
   // Events — strip to API-safe keys, keep preview for display, apply settings
@@ -1182,6 +1194,133 @@ async function handleAutoAnalyzeCached(cached, message, emailBody, settings) {
   }
 }
 
+// --- Bulk Triage ---
+
+async function handleBulkTriage(messages, settings) {
+  // Gather triage data — cache lookup for each message (no Ollama calls)
+  const triageItems = [];
+  for (const msg of messages) {
+    const cached = await cacheGet(msg.id);
+    const item = {
+      messageId: msg.id,
+      subject: msg.subject || "(no subject)",
+      author: msg.author || "",
+      date: msg.date ? new Date(msg.date).toISOString() : null,
+      cached: !!(cached && cached.raw),
+      analysis: null,
+    };
+    if (cached && cached.raw) {
+      const raw = cached.raw;
+      item.analysis = {
+        summary: raw.summary || "",
+        priority: raw.priority || "informational",
+        eventCount: Array.isArray(raw.events) ? raw.events.length : 0,
+        taskCount: Array.isArray(raw.tasks) ? raw.tasks.length : 0,
+        contactCount: Array.isArray(raw.contacts) ? raw.contacts.length : 0,
+        cacheTimestamp: cached.ts,
+      };
+    }
+    triageItems.push(item);
+  }
+
+  // Store triage data and open dialog
+  await browser.storage.local.set({ pendingTriage: triageItems });
+
+  // Non-async listener — returning undefined for non-triage messages avoids
+  // claiming the message channel (an async listener always returns a Promise,
+  // which interferes with other onMessage listeners like the analyze dialog's).
+  const triageListener = (msg) => {
+    if (!msg || !msg.triageAction) return;
+
+    if (msg.triageAction === "viewAnalysis") {
+      (async () => {
+        try {
+          const message = await browser.messages.get(msg.messageId);
+          const full = await browser.messages.getFull(msg.messageId);
+          const emailBody = extractTextBody(full);
+          if (emailBody) {
+            await handleAutoAnalyze(message, emailBody, settings);
+          } else {
+            notifyError("Empty body", "Could not extract plain text from this message.");
+          }
+        } catch (e) {
+          notifyError("Error", e.message);
+        }
+        browser.runtime.sendMessage({ triageViewDone: true, messageId: msg.messageId }).catch(() => {});
+      })();
+      return;
+    }
+
+    if (msg.triageAction === "archive") {
+      (async () => {
+        try {
+          await browser.messages.archive(msg.messageIds);
+          for (const id of msg.messageIds) {
+            browser.runtime.sendMessage({ triageArchived: true, messageId: id }).catch(() => {});
+          }
+        } catch (e) {
+          notifyError("Archive error", e.message);
+        }
+      })();
+      return;
+    }
+
+    if (msg.triageAction === "delete") {
+      (async () => {
+        try {
+          await browser.messages.delete(msg.messageIds, false);
+          for (const id of msg.messageIds) {
+            browser.runtime.sendMessage({ triageDeleted: true, messageId: id }).catch(() => {});
+          }
+        } catch (e) {
+          notifyError("Delete error", e.message);
+        }
+      })();
+      return;
+    }
+
+    if (msg.triageAction === "queue") {
+      bgProcessorEnqueue(msg.messageId);
+      browser.runtime.sendMessage({ triageQueued: true, messageId: msg.messageId }).catch(() => {});
+      return;
+    }
+
+    if (msg.triageAction === "queueAll") {
+      const queued = [];
+      for (const id of msg.messageIds) {
+        bgProcessorEnqueue(id);
+        queued.push(id);
+      }
+      browser.runtime.sendMessage({ triageQueuedAll: true, messageIds: queued }).catch(() => {});
+      return;
+    }
+  };
+  browser.runtime.onMessage.addListener(triageListener);
+
+  // Open popup and clean up on close
+  try {
+    const win = await browser.windows.create({
+      url: browser.runtime.getURL("triage/triage.html"),
+      type: "popup",
+      width: 680,
+      height: 820,
+    });
+
+    await new Promise((resolve) => {
+      const onRemoved = (windowId) => {
+        if (windowId === win.id) {
+          browser.windows.onRemoved.removeListener(onRemoved);
+          resolve();
+        }
+      };
+      browser.windows.onRemoved.addListener(onRemoved);
+    });
+  } finally {
+    browser.runtime.onMessage.removeListener(triageListener);
+    browser.storage.local.remove("pendingTriage").catch(() => {});
+  }
+}
+
 // --- Menu click handler ---
 
 browser.menus.onClicked.addListener(async (info, tab) => {
@@ -1220,6 +1359,17 @@ browser.menus.onClicked.addListener(async (info, tab) => {
         } catch {}
       }
     }).catch(() => {});
+    return;
+  }
+
+  // Bulk Triage — open a priority-sorted summary view for multiple emails
+  if (info.menuItemId === "thunderclerk-ai-bulk-triage") {
+    const settings = await browser.storage.sync.get(DEFAULTS);
+    if (!settings.autoAnalyzeEnabled) {
+      notifyError("Auto Analyze disabled", "Enable Auto Analyze in the extension settings to use Bulk Triage.");
+      return;
+    }
+    await handleBulkTriage(messages, settings);
     return;
   }
 

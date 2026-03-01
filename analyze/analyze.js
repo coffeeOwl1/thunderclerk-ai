@@ -11,6 +11,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   const analysis = pendingAnalysis;
   const isFromCache = !!analysis._fromCache;
 
+  // --- Populate title with email subject and author ---
+  document.getElementById("title-subject").textContent =
+    analysis._subject || "Analysis";
+  document.getElementById("title-author").textContent =
+    analysis._author || "";
+
   // --- Show cache age and Refresh button when showing cached data ---
   if (isFromCache && analysis._cacheTimestamp) {
     const cacheAgeEl = document.getElementById("cache-age");

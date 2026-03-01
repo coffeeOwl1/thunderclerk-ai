@@ -23,11 +23,26 @@
     /* ── Title row ────────────────────────────────────────── */
     h2 {
       margin: 0;
-      font-size: 18px;
+      font-size: 15px;
       font-weight: 500;
-      display: inline;
       color: #1a1b2e;
       letter-spacing: 0.01em;
+      line-height: 1.35;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .title-text {
+      flex: 1;
+      min-width: 0;
+    }
+    .title-author {
+      font-size: 11.5px;
+      color: #9ca3af;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-top: 1px;
     }
     .title-row {
       display: flex;
@@ -330,6 +345,7 @@
       }
       h2 { color: #ededf4; }
       h3 { color: #d4d4dc; }
+      .title-author { color: #71717a; }
       #cache-age { color: #71717a; }
 
       #summary,
@@ -443,9 +459,11 @@
 </head>
 <body>
   <div class="title-row">
-    <h2>ThunderClerk-AI Analysis</h2>
+    <div class="title-text">
+      <h2 id="title-subject"></h2>
+      <div id="title-author" class="title-author"></div>
+    </div>
     <span id="cache-age" style="display:none;"></span>
-    <span class="title-spacer"></span>
     <button id="refresh-btn" style="display:none;">Re-analyze</button>
   </div>
 
