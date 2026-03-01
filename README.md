@@ -21,6 +21,7 @@ No cloud accounts, no API keys, no text selection required — just Thunderbird 
 - Reads the full email body — no need to select text first
 - All processing is done locally via your own Ollama instance
 - Auto-tagging can run in the background after any other action
+- **Cache-first actions** — when Auto Analyze background processing has already analyzed an email, all individual actions (Add to Calendar, Add as Task, Draft Reply, Summarize & Forward, Extract Contact, Catalog Email) use cached results instantly instead of making an LLM call. Falls back to on-demand LLM when no cache exists.
 - Configurable: model, host, attendees source, default calendar, description format, categories
 
 ## Requirements

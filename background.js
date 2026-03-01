@@ -359,6 +359,25 @@ async function callOllamaWithNotification(host, model, prompt, actionLabel, sett
 // --- Action handlers ---
 
 async function handleCalendar(message, emailBody, settings) {
+  // Cache-first: use cached event if available from background processor
+  try {
+    const cached = await cacheGet(message.id);
+    if (cached && cached.raw) {
+      const raw = cached.raw;
+      if (Array.isArray(raw.events) && raw.events.length > 0) {
+        const evt = pickKeys(raw.events[0], CALENDAR_API_KEYS);
+        applyEventSettings(evt, message, emailBody, settings);
+        await browser.CalendarTools.openCalendarDialog(evt);
+        return;
+      }
+      notifyError("No events found", "The cached analysis found no calendar events in this email.");
+      return;
+    }
+  } catch (e) {
+    console.warn("[ThunderClerk-AI] Cache check failed, falling back to LLM:", e.message);
+  }
+
+  // Cache miss — fall back to on-demand LLM call
   const host              = settings.ollamaHost        || DEFAULT_HOST;
   const model             = settings.ollamaModel       || DEFAULTS.ollamaModel;
   const attendeesSource   = settings.attendeesSource   || "from_to";
@@ -391,6 +410,25 @@ async function handleCalendar(message, emailBody, settings) {
 }
 
 async function handleTask(message, emailBody, settings) {
+  // Cache-first: use cached task if available from background processor
+  try {
+    const cached = await cacheGet(message.id);
+    if (cached && cached.raw) {
+      const raw = cached.raw;
+      if (Array.isArray(raw.tasks) && raw.tasks.length > 0) {
+        const task = pickKeys(raw.tasks[0], TASK_API_KEYS);
+        applyTaskSettings(task, message, emailBody, settings);
+        await browser.CalendarTools.openTaskDialog(task);
+        return;
+      }
+      notifyError("No tasks found", "The cached analysis found no tasks in this email.");
+      return;
+    }
+  } catch (e) {
+    console.warn("[ThunderClerk-AI] Cache check failed, falling back to LLM:", e.message);
+  }
+
+  // Cache miss — fall back to on-demand LLM call
   const host              = settings.ollamaHost            || DEFAULT_HOST;
   const model             = settings.ollamaModel           || DEFAULTS.ollamaModel;
   const taskUseCategory   = !!settings.taskUseCategory;
@@ -420,6 +458,23 @@ async function handleTask(message, emailBody, settings) {
 }
 
 async function handleDraftReply(message, emailBody, settings) {
+  // Cache-first: use cached reply if available from background processor
+  try {
+    const cached = await cacheGet(message.id);
+    if (cached && cached.raw) {
+      const reply = (cached.raw.reply || "").trim();
+      if (reply) {
+        await openComposeWithReply(message, reply, settings);
+        return;
+      }
+      notifyError("No reply generated", "The cached analysis did not produce a reply draft for this email.");
+      return;
+    }
+  } catch (e) {
+    console.warn("[ThunderClerk-AI] Cache check failed, falling back to LLM:", e.message);
+  }
+
+  // Cache miss — fall back to on-demand LLM call
   const host   = settings.ollamaHost  || DEFAULT_HOST;
   const model  = settings.ollamaModel || DEFAULTS.ollamaModel;
   const author = message.author || "";
@@ -438,6 +493,31 @@ async function handleDraftReply(message, emailBody, settings) {
 }
 
 async function handleSummarizeForward(message, emailBody, settings) {
+  // Cache-first: use cached forward summary if available from background processor
+  try {
+    const cached = await cacheGet(message.id);
+    if (cached && cached.raw) {
+      const summary = (cached.raw.forwardSummary || "").trim();
+      if (summary) {
+        const composeTab = await browser.compose.beginForward(message.id, "forwardInline");
+        const details = await browser.compose.getComposeDetails(composeTab.id);
+        const escapedSummary = summary
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\n/g, "<br>");
+        const newBody = `<p><strong>Summary:</strong><br>${escapedSummary}</p><hr>` + (details.body || "");
+        await browser.compose.setComposeDetails(composeTab.id, { body: newBody });
+        return;
+      }
+      notifyError("No summary generated", "The cached analysis did not produce a summary for this email.");
+      return;
+    }
+  } catch (e) {
+    console.warn("[ThunderClerk-AI] Cache check failed, falling back to LLM:", e.message);
+  }
+
+  // Cache miss — fall back to on-demand LLM call
   const host   = settings.ollamaHost  || DEFAULT_HOST;
   const model  = settings.ollamaModel || DEFAULTS.ollamaModel;
   const author = message.author || "";
@@ -468,6 +548,32 @@ async function handleSummarizeForward(message, emailBody, settings) {
 }
 
 async function handleExtractContact(message, emailBody, settings) {
+  // Cache-first: use cached contact if available from background processor
+  try {
+    const cached = await cacheGet(message.id);
+    if (cached && cached.raw) {
+      const contacts = cached.raw.contacts;
+      if (Array.isArray(contacts) && contacts.length > 0) {
+        await browser.storage.local.set({
+          pendingContact: contacts[0],
+          contactAddressBook: settings.contactAddressBook || "",
+        });
+        await browser.windows.create({
+          type: "popup",
+          url: "contact/review.html",
+          width: 420,
+          height: 520,
+        });
+        return;
+      }
+      notifyError("No contact info found", "The cached analysis found no contact information in this email.");
+      return;
+    }
+  } catch (e) {
+    console.warn("[ThunderClerk-AI] Cache check failed, falling back to LLM:", e.message);
+  }
+
+  // Cache miss — fall back to on-demand LLM call
   const host   = settings.ollamaHost  || DEFAULT_HOST;
   const model  = settings.ollamaModel || DEFAULTS.ollamaModel;
   const author = message.author || "";
@@ -508,6 +614,24 @@ function nextTagColor() {
 // --- Catalog email (AI-powered tagging) ---
 
 async function catalogEmail(message, emailBody, settings) {
+  // Cache-first: use cached tags if available from background processor
+  try {
+    const cached = await cacheGet(message.id);
+    if (cached && cached.raw) {
+      const cachedTags = cached.raw.tags;
+      if (Array.isArray(cachedTags) && cachedTags.length > 0) {
+        // Jump straight to tag resolution with cached tags
+        const existingTags = await browser.messages.tags.list();
+        return await _applyTags(message, cachedTags, existingTags, settings);
+      }
+      // Silent return — catalogEmail is often fire-and-forget via autoTagAfterAction
+      return;
+    }
+  } catch (e) {
+    console.warn("[ThunderClerk-AI] Cache check failed, falling back to LLM:", e.message);
+  }
+
+  // Cache miss — fall back to on-demand LLM call
   const host  = settings.ollamaHost  || DEFAULT_HOST;
   const model = settings.ollamaModel || DEFAULTS.ollamaModel;
   const author  = message.author  || "";
@@ -526,6 +650,11 @@ async function catalogEmail(message, emailBody, settings) {
     return;
   }
 
+  await _applyTags(message, aiTags, existingTags, settings);
+}
+
+// Shared tag resolution + apply logic used by both cached and LLM paths.
+async function _applyTags(message, aiTags, existingTags, settings) {
   // Limit to 3 tags
   const tagNames = aiTags.slice(0, 3);
 
