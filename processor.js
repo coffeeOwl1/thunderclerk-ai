@@ -25,6 +25,10 @@ let manualActionInFlight = false;         // a manual menu action is running
 let bgProcessedCount = 0;                 // session counter
 let bgErrorCount = 0;                     // session counter
 
+// Callback hooks for Ollama status indicator (wired up in background.js)
+let bgOnOllamaError = null;               // called when callOllama fails
+let bgOnOllamaSuccess = null;             // called after successful callOllama
+
 // --- Public API for background.js ---
 
 function bgProcessorSetManualFlag(active) {
@@ -192,6 +196,7 @@ async function processNextInQueue() {
       bgPaused = true;
       bgProcessing = false;
       bgQueue.unshift(item);
+      if (typeof bgOnOllamaError === "function") bgOnOllamaError();
       setTimeout(() => {
         console.log(BG_LOG_PREFIX, "Retry delay elapsed — resuming queue");
         bgPaused = false;
@@ -202,6 +207,7 @@ async function processNextInQueue() {
 
     const ollamaElapsed = ((Date.now() - ollamaStartTime) / 1000).toFixed(1);
     console.log(BG_LOG_PREFIX, `  Ollama responded in ${ollamaElapsed}s — ${rawResponse.length} chars`);
+    if (typeof bgOnOllamaSuccess === "function") bgOnOllamaSuccess();
 
     // Parse response
     let result = null;

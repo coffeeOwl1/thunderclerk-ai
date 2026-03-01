@@ -172,7 +172,153 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (area === "sync" && changes.autoAnalyzeEnabled) {
     syncAutoAnalyzeVisibility();
   }
+  // Re-check Ollama immediately when the host URL changes
+  if (area === "sync" && changes.ollamaHost) {
+    checkOllamaStatus();
+  }
 });
+
+// --- Ollama connectivity status indicator (toolbar button) ---
+
+let ollamaReachable = null; // null=unknown, true=up, false=down
+const OLLAMA_CHECK_INTERVAL_MS = 30000;
+
+// Cache loaded icon ImageBitmaps so we only decode PNGs once.
+const _iconCache = {}; // { size: ImageBitmap }
+
+async function _loadIcon(size) {
+  if (_iconCache[size]) return _iconCache[size];
+  const resp = await fetch(browser.runtime.getURL(`icons/icon-${size}.png`));
+  const blob = await resp.blob();
+  const bmp = await createImageBitmap(blob);
+  _iconCache[size] = bmp;
+  return bmp;
+}
+
+// Draw the base icon with a colored status dot in the top-right corner.
+async function _buildStatusIcon(color) {
+  const sizes = [16, 32];
+  const imageData = {};
+
+  for (const size of sizes) {
+    const canvas = new OffscreenCanvas(size, size);
+    const ctx = canvas.getContext("2d");
+
+    // Draw the base icon at full size
+    try {
+      const bmp = await _loadIcon(size);
+      ctx.drawImage(bmp, 0, 0, size, size);
+    } catch {
+      // If icon load fails, just draw the dot on a blank canvas
+    }
+
+    // Status dot: top-right corner, inset so outline isn't clipped
+    const dotRadius = size <= 16 ? 3 : 5;
+    const outline = 1;
+    const cx = size - dotRadius - outline;
+    const cy = dotRadius + outline;
+
+    // White outline for contrast
+    ctx.beginPath();
+    ctx.arc(cx, cy, dotRadius + 1, 0, Math.PI * 2);
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fill();
+
+    // Colored dot
+    ctx.beginPath();
+    ctx.arc(cx, cy, dotRadius, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+
+    imageData[size] = ctx.getImageData(0, 0, size, size);
+  }
+  return imageData;
+}
+
+async function updateOllamaStatusIcon(reachable) {
+  let color, title;
+  if (reachable) {
+    color = "#4CAF50";
+    title = "ThunderClerk-AI — connected";
+  } else if (reachable === false) {
+    color = "#F44336";
+    title = "ThunderClerk-AI — unreachable";
+  } else {
+    color = "#FF9800";
+    title = "ThunderClerk-AI — checking...";
+  }
+
+  try {
+    const imageData = await _buildStatusIcon(color);
+    browser.browserAction.setIcon({ imageData });
+  } catch (e) {
+    if (DEBUG) console.warn("[ThunderClerk-AI] Status icon render failed:", e.message);
+  }
+  browser.browserAction.setTitle({ title });
+}
+
+async function checkOllamaStatus() {
+  let host;
+  try {
+    const settings = await browser.storage.sync.get({ ollamaHost: DEFAULT_HOST });
+    host = settings.ollamaHost || DEFAULT_HOST;
+  } catch {
+    host = DEFAULT_HOST;
+  }
+
+  if (!isValidHostUrl(host)) {
+    ollamaReachable = false;
+    updateOllamaStatusIcon(false);
+    return;
+  }
+
+  const url = host.replace(/\/$/, "") + "/api/tags";
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const resp = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    const wasDown = ollamaReachable === false;
+    ollamaReachable = resp.ok;
+    updateOllamaStatusIcon(ollamaReachable);
+
+    // Auto-resume background processor when Ollama comes back online
+    if (ollamaReachable && wasDown && bgPaused) {
+      console.log("[ThunderClerk-AI] Ollama back online — resuming background processor");
+      bgPaused = false;
+      scheduleNext();
+    }
+  } catch {
+    clearTimeout(timeoutId);
+    ollamaReachable = false;
+    updateOllamaStatusIcon(false);
+  }
+}
+
+function initOllamaStatusMonitor() {
+  updateOllamaStatusIcon(null);
+  checkOllamaStatus();
+  setInterval(checkOllamaStatus, OLLAMA_CHECK_INTERVAL_MS);
+}
+
+// Wire up processor callbacks for instant status updates
+bgOnOllamaError = () => {
+  ollamaReachable = false;
+  updateOllamaStatusIcon(false);
+};
+bgOnOllamaSuccess = () => {
+  if (!ollamaReachable) {
+    ollamaReachable = true;
+    updateOllamaStatusIcon(true);
+  }
+};
+
+browser.browserAction.onClicked.addListener(() => {
+  browser.runtime.openOptionsPage();
+});
+
+initOllamaStatusMonitor();
 
 // Pure utility functions (normalizeCalDate, extractJSON, buildAttendeesHint,
 // buildDescription, buildCategoryInstruction, isValidHostUrl, etc.) are
