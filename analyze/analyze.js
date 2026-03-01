@@ -111,9 +111,19 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const text = document.createElement("span");
     text.className = "item-text";
-    text.textContent = analysis._unsubscribe.https
-      ? "Unsubscribe link found (opens browser)"
-      : "Unsubscribe link found (opens compose)";
+    if (analysis._unsubscribe.https) {
+      try {
+        const domain = new URL(analysis._unsubscribe.https).hostname;
+        text.append("Unsubscribe via ");
+        const bold = document.createElement("b");
+        bold.textContent = domain;
+        text.appendChild(bold);
+      } catch {
+        text.textContent = "Unsubscribe link found";
+      }
+    } else {
+      text.textContent = "Unsubscribe (opens compose)";
+    }
 
     const btn = document.createElement("button");
     btn.className = "add-btn";
