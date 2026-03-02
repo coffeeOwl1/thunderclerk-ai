@@ -249,6 +249,22 @@ async function processNextInQueue() {
       await cacheSet(item.messageId, result);
       bgProcessedCount++;
 
+      // Auto-tag if enabled (read directly — key may be absent from older DEFAULTS)
+      const { autoTagOnCache } = await browser.storage.sync.get({ autoTagOnCache: false });
+      if (autoTagOnCache && Array.isArray(result.tags) && result.tags.length > 0) {
+        try {
+          const existingTags = await browser.messages.tags.list();
+          const applied = await _applyTags(
+            { id: item.messageId }, result.tags, existingTags, { silent: true }
+          );
+          if (applied && applied.length > 0) {
+            console.log(BG_LOG_PREFIX, `  Auto-tagged: ${applied.join(", ")}`);
+          }
+        } catch (e) {
+          console.warn(BG_LOG_PREFIX, `  Auto-tag failed: ${e.message}`);
+        }
+      }
+
       const totalElapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       const found = [];
       if (result.events?.length)   found.push(`${result.events.length} event(s)`);

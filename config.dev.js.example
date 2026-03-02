@@ -23,6 +23,7 @@ const DEFAULTS = {
   contactAddressBook:    "",
   // Email cataloging settings
   autoTagAfterAction:    true,
+  autoTagOnCache:        false,
   // Auto Analyze settings (includes background processing and caching)
   autoAnalyzeEnabled:    true,
   bgCacheMaxDays:        1,

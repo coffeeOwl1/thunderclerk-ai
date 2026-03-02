@@ -787,7 +787,8 @@ async function catalogEmail(message, emailBody, settings, full) {
 }
 
 // Shared tag resolution + apply logic used by both cached and LLM paths.
-async function _applyTags(message, aiTags, existingTags) {
+// Options: { silent } — when true, suppresses per-message notification (for bulk ops).
+async function _applyTags(message, aiTags, existingTags, { silent = false } = {}) {
   // Limit to 3 tags
   const tagNames = aiTags.slice(0, 3);
 
@@ -804,7 +805,7 @@ async function _applyTags(message, aiTags, existingTags) {
     }
   }
 
-  if (tagKeys.length === 0) return;
+  if (tagKeys.length === 0) return appliedNames;
 
   // Read-merge-write: messages.update replaces all tags, so preserve existing
   const currentMsg = await browser.messages.get(message.id);
@@ -813,11 +814,15 @@ async function _applyTags(message, aiTags, existingTags) {
 
   await browser.messages.update(message.id, { tags: mergedTags });
 
-  browser.notifications.create({
-    type: "basic",
-    title: "ThunderClerk-AI",
-    message: `Tagged: ${appliedNames.join(", ")}`,
-  }).catch(() => {});
+  if (!silent) {
+    browser.notifications.create({
+      type: "basic",
+      title: "ThunderClerk-AI",
+      message: `Tagged: ${appliedNames.join(", ")}`,
+    }).catch(() => {});
+  }
+
+  return appliedNames;
 }
 
 // --- Shared helpers for applying settings to extracted event/task data ---
@@ -1449,6 +1454,7 @@ async function handleBulkTriage(messages, settings) {
         eventCount: Array.isArray(raw.events) ? raw.events.length : 0,
         taskCount: Array.isArray(raw.tasks) ? raw.tasks.length : 0,
         contactCount: Array.isArray(raw.contacts) ? raw.contacts.length : 0,
+        tags: Array.isArray(raw.tags) ? raw.tags : [],
         cacheTimestamp: cached.ts,
       };
     }
@@ -1534,6 +1540,44 @@ async function handleBulkTriage(messages, settings) {
       return;
     }
 
+    if (msg.triageAction === "tagAll") {
+      (async () => {
+        try {
+          const existingTags = await browser.messages.tags.list();
+          let taggedCount = 0;
+          const allApplied = [];
+          for (const item of msg.items) {
+            if (!Array.isArray(item.tags) || item.tags.length === 0) continue;
+            try {
+              const applied = await _applyTags(
+                { id: item.messageId }, item.tags, existingTags, { silent: true }
+              );
+              if (applied && applied.length > 0) {
+                taggedCount++;
+                allApplied.push(...applied);
+              }
+            } catch (e) {
+              console.warn("[ThunderClerk-AI] Tag failed for message", item.messageId, e.message);
+            }
+            browser.runtime.sendMessage({
+              triageTagged: true, messageId: item.messageId,
+            }).catch(() => {});
+          }
+          if (taggedCount > 0) {
+            const unique = [...new Set(allApplied)];
+            browser.notifications.create({
+              type: "basic",
+              title: "ThunderClerk-AI",
+              message: `Tagged ${taggedCount} email${taggedCount > 1 ? "s" : ""}: ${unique.join(", ")}`,
+            }).catch(() => {});
+          }
+        } catch (e) {
+          notifyError("Tag error", e.message);
+        }
+      })();
+      return;
+    }
+
     if (msg.triageAction === "getAllCached") {
       (async () => {
         try {
@@ -1563,6 +1607,7 @@ async function handleBulkTriage(messages, settings) {
                 eventCount: Array.isArray(raw.events) ? raw.events.length : 0,
                 taskCount: Array.isArray(raw.tasks) ? raw.tasks.length : 0,
                 contactCount: Array.isArray(raw.contacts) ? raw.contacts.length : 0,
+                tags: Array.isArray(raw.tags) ? raw.tags : [],
                 cacheTimestamp: cached.ts,
               },
             });
@@ -1890,6 +1935,35 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.action === "startBgProcessor") {
     bgProcessorStart();
     sendResponse({ ok: true });
+    return true;
+  }
+  if (msg && msg.action === "stripPresetTags") {
+    (async () => {
+      try {
+        const allTags = await browser.messages.tags.list();
+        const presetKeys = new Set(allTags.filter(t => t.key.startsWith("$label_tc_")).map(t => t.key));
+        if (presetKeys.size === 0) { sendResponse({ count: 0 }); return; }
+
+        const tagsQuery = {};
+        for (const key of presetKeys) tagsQuery[key] = true;
+        let page = await browser.messages.query({ tags: { mode: "any", tags: tagsQuery } });
+        let stripped = 0;
+        do {
+          for (const msg of page.messages) {
+            const kept = (msg.tags || []).filter(k => !presetKeys.has(k));
+            if (kept.length < (msg.tags || []).length) {
+              await browser.messages.update(msg.id, { tags: kept });
+              stripped++;
+            }
+          }
+          if (page.id) { page = await browser.messages.continueList(page.id); } else break;
+        } while (page.messages.length > 0);
+
+        sendResponse({ count: stripped });
+      } catch (e) {
+        sendResponse({ error: e.message });
+      }
+    })();
     return true;
   }
 });

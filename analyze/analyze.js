@@ -111,6 +111,30 @@ document.addEventListener("DOMContentLoaded", async () => {
     detectedEl.appendChild(groupDiv);
   }
 
+  // Tags — show cached AI tags as informational chips
+  const cachedTags = analysis._cachedTags;
+  if (Array.isArray(cachedTags) && cachedTags.length > 0) {
+    hasDetected = true;
+    const groupDiv = document.createElement("div");
+    groupDiv.className = "group";
+
+    const groupLabel = document.createElement("div");
+    groupLabel.className = "group-label";
+    groupLabel.textContent = "Tags";
+    groupDiv.appendChild(groupLabel);
+
+    const chipWrap = document.createElement("div");
+    chipWrap.className = "tag-chip-wrap";
+    for (const tag of cachedTags) {
+      const chip = document.createElement("span");
+      chip.className = "tag-chip";
+      chip.textContent = tag;
+      chipWrap.appendChild(chip);
+    }
+    groupDiv.appendChild(chipWrap);
+    detectedEl.appendChild(groupDiv);
+  }
+
   // Unsubscribe — detected from List-Unsubscribe header, not AI-driven
   if (analysis._unsubscribe) {
     hasDetected = true;

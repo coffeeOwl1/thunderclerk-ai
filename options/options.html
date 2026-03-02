@@ -210,17 +210,12 @@
   <!-- Email Cataloging -->
   <h3>Email Cataloging</h3>
 
-  <div class="checkbox-row">
-    <input type="checkbox" id="autoTagAfterAction" />
-    <label for="autoTagAfterAction">Auto-tag emails after other actions</label>
-  </div>
-  <div class="hint">Automatically apply AI-generated tags to emails after using Add to Calendar, Add as Task, and other actions.</div>
-
-  <div style="margin-top:10px; padding:10px 14px; background:#f0f4ff; border:1px solid #c5d0f0; border-radius:6px; font-size:12px; color:#333; line-height:1.6;">
-    <strong>Preset tag library</strong><br>
+  <div style="padding:10px 14px; background:#f0f4ff; border:1px solid #c5d0f0; border-radius:6px; font-size:12px; color:#333; line-height:1.6;">
+    <strong>Preset tag library</strong> (strongly recommended)<br>
     A curated set of 16 tags designed for consistent AI categorization.
-    Use this if you haven't set up tags yet — it <em>replaces</em> all
-    existing tags.<br><br>
+    Without well-defined tags, the AI will match against whatever tags
+    Thunderbird has — generic defaults like <em>Personal</em> or
+    <em>To Do</em> tend to get applied to everything.<br><br>
     <span style="font-size:11px; color:#555;">
       Automated · Bounce-Back · Calendar · Direct · Financial ·
       Has-Attachment · Has-Deadline · Inquiry · Legal · Logistics ·
@@ -230,7 +225,25 @@
     <button id="install-preset-tags-btn" style="padding:4px 14px; font-size:12px; cursor:pointer; border-radius:4px; border:1px solid #c5d0f0; background:#fff;">
       Install Preset Tags
     </button>
+    <button id="strip-preset-tags-btn" style="padding:4px 14px; font-size:12px; cursor:pointer; border-radius:4px; border:1px solid #c5d0f0; background:#fff;">
+      Remove Tags from All Emails
+    </button>
     <span id="preset-tags-status" style="margin-left:8px; font-size:11px;"></span>
+  </div>
+
+  <div class="checkbox-row" style="margin-top:12px;">
+    <input type="checkbox" id="autoTagAfterAction" />
+    <label for="autoTagAfterAction">Auto-tag emails after other actions</label>
+  </div>
+  <div class="hint">Automatically apply AI-generated tags to emails after using Add to Calendar, Add as Task, and other actions.</div>
+
+  <div class="checkbox-row">
+    <input type="checkbox" id="autoTagOnCache" />
+    <label for="autoTagOnCache">Auto-tag emails when cached by background processor</label>
+  </div>
+  <div class="hint">Automatically apply AI-suggested tags to every email as it is processed by Auto Analyze. Requires Auto Analyze to be enabled.</div>
+  <div id="autoTagOnCache-warning" style="display:none; margin-top:6px; padding:7px 10px; background:#fff8e1; border:1px solid #f0c040; border-radius:4px; font-size:11px; color:#7a5d00; line-height:1.5;">
+    <strong>Caution:</strong> This applies tags to every incoming email automatically. Tags are non-destructive (they can be removed manually), but this generates a high volume of tag operations. Make sure you have a well-curated tag library — without one, generic tags like <em>Personal</em> end up on everything.
   </div>
 
   <!-- Auto Analyze -->

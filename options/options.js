@@ -162,6 +162,25 @@ function syncBgProcessingUI(autoAnalyzeEnabled) {
   if (autoAnalyzeEnabled) updateBgStats();
 }
 
+// --- Auto-tag UI sync ---
+// autoTagOnCache requires Auto Analyze (functionally meaningless without it).
+
+function syncAutoTagUI() {
+  const autoAnalyze = document.getElementById("autoAnalyzeEnabled").checked;
+  const onCacheCb = document.getElementById("autoTagOnCache");
+  const onCacheWarning = document.getElementById("autoTagOnCache-warning");
+
+  // autoTagOnCache: requires Auto Analyze
+  if (!autoAnalyze) {
+    onCacheCb.disabled = true;
+    onCacheCb.checked = false;
+    if (onCacheWarning) onCacheWarning.style.display = "none";
+  } else {
+    onCacheCb.disabled = false;
+    if (onCacheWarning) onCacheWarning.style.display = onCacheCb.checked ? "block" : "none";
+  }
+}
+
 async function updateBgStats() {
   const statsText = document.getElementById("bg-stats-text");
   const stopBtn = document.getElementById("bg-stop-btn");
@@ -336,12 +355,14 @@ async function restoreOptions() {
   document.getElementById("taskUseCategory").checked        = !!s.taskUseCategory;
   document.getElementById("replyMode").value                = s.replyMode;
   document.getElementById("autoTagAfterAction").checked      = !!s.autoTagAfterAction;
+  document.getElementById("autoTagOnCache").checked          = !!s.autoTagOnCache;
   document.getElementById("autoAnalyzeEnabled").checked      = !!s.autoAnalyzeEnabled;
   document.getElementById("bgCacheMaxDays").value            = String(s.bgCacheMaxDays || 1);
   document.getElementById("debugPromptPreview").checked     = !!s.debugPromptPreview;
 
-  // Sync background processing UI state
+  // Sync background processing + auto-tag UI state
   syncBgProcessingUI(!!s.autoAnalyzeEnabled);
+  syncAutoTagUI();
   document.getElementById("numCtx").value        = String(s.numCtx || 0);
   document.getElementById("numPredict").value    = String(s.numPredict || 0);
 
@@ -400,6 +421,7 @@ async function saveOptions() {
     replyMode:             document.getElementById("replyMode").value,
     contactAddressBook:    document.getElementById("contactAddressBook").value,
     autoTagAfterAction:    document.getElementById("autoTagAfterAction").checked,
+    autoTagOnCache:        document.getElementById("autoTagOnCache").checked,
     autoAnalyzeEnabled:    document.getElementById("autoAnalyzeEnabled").checked,
     bgCacheMaxDays:        Number(document.getElementById("bgCacheMaxDays").value) || 1,
     numCtx:                Number(document.getElementById("numCtx").value) || 0,
@@ -458,9 +480,15 @@ document.addEventListener("DOMContentLoaded", () => {
     updateVramEstimate();
   });
 
+  document.getElementById("autoTagOnCache").addEventListener("change", () => {
+    const warning = document.getElementById("autoTagOnCache-warning");
+    if (warning) warning.style.display = document.getElementById("autoTagOnCache").checked ? "block" : "none";
+  });
+
   document.getElementById("autoAnalyzeEnabled").addEventListener("change", () => {
     updateVramEstimate();
     syncBgProcessingUI(document.getElementById("autoAnalyzeEnabled").checked);
+    syncAutoTagUI();
   });
 
   document.getElementById("refresh-calendars").addEventListener("click", async () => {
@@ -544,6 +572,29 @@ document.addEventListener("DOMContentLoaded", () => {
       status.style.color = "green";
     } catch (e) {
       console.error("[ThunderClerk-AI] Preset tag install failed:", e);
+      status.textContent = "Error: " + e.message;
+      status.style.color = "red";
+    }
+    btn.disabled = false;
+  });
+
+  document.getElementById("strip-preset-tags-btn").addEventListener("click", async () => {
+    if (!confirm("Remove all ThunderClerk preset tags from every email in your account?\n\nThis only removes tags with the ThunderClerk prefix — other tags are preserved.")) return;
+
+    const btn = document.getElementById("strip-preset-tags-btn");
+    const status = document.getElementById("preset-tags-status");
+    btn.disabled = true;
+    status.textContent = "Removing\u2026";
+    status.style.color = "#333";
+
+    try {
+      const result = await browser.runtime.sendMessage({ action: "stripPresetTags" });
+      if (result.error) throw new Error(result.error);
+      status.textContent = result.count > 0
+        ? `Removed tags from ${result.count} email${result.count > 1 ? "s" : ""}.`
+        : "No emails had ThunderClerk tags.";
+      status.style.color = "green";
+    } catch (e) {
       status.textContent = "Error: " + e.message;
       status.style.color = "red";
     }

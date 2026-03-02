@@ -21,12 +21,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Track card states (archived/deleted/queued) — shared across both views
   const cardState = {}; // messageId → { archived, deleted, queued }
   for (const item of selectedItems) {
-    cardState[item.messageId] = { archived: false, deleted: false, queued: false };
+    cardState[item.messageId] = { archived: false, deleted: false, queued: false, tagged: false };
   }
 
   function ensureCardState(messageId) {
     if (!cardState[messageId]) {
-      cardState[messageId] = { archived: false, deleted: false, queued: false };
+      cardState[messageId] = { archived: false, deleted: false, queued: false, tagged: false };
     }
   }
 
@@ -62,6 +62,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const selectAllCb = document.getElementById("select-all");
   const archiveBtn = document.getElementById("archive-selected-btn");
   const deleteBtn = document.getElementById("delete-selected-btn");
+  const tagBtn = document.getElementById("tag-selected-btn");
   const queueUnanalyzedBtn = document.getElementById("queue-unanalyzed-btn");
   const emailCountEl = document.getElementById("email-count");
   const viewBtn = document.getElementById("view-btn");
@@ -151,6 +152,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (a.eventCount > 0) meta.appendChild(makeChip(`${a.eventCount} event${a.eventCount > 1 ? "s" : ""}`));
         if (a.taskCount > 0) meta.appendChild(makeChip(`${a.taskCount} task${a.taskCount > 1 ? "s" : ""}`));
         if (a.contactCount > 0) meta.appendChild(makeChip(`${a.contactCount} contact${a.contactCount > 1 ? "s" : ""}`));
+        if (a.tags && a.tags.length > 0) meta.appendChild(makeChip(`${a.tags.length} tag${a.tags.length > 1 ? "s" : ""}`));
       } else {
         const na = document.createElement("span");
         na.className = "not-analyzed";
@@ -158,12 +160,18 @@ document.addEventListener("DOMContentLoaded", async () => {
         meta.appendChild(na);
       }
 
-      // Status label (if archived/deleted)
+      // Status labels (archived/deleted/tagged)
       if (state.archived || state.deleted) {
         const statusLabel = document.createElement("span");
         statusLabel.className = `card-status status-${state.archived ? "archived" : "deleted"}`;
         statusLabel.textContent = state.archived ? "Archived" : "Deleted";
         meta.appendChild(statusLabel);
+      }
+      if (state.tagged) {
+        const taggedLabel = document.createElement("span");
+        taggedLabel.className = "card-status status-tagged";
+        taggedLabel.textContent = "Tagged";
+        meta.appendChild(taggedLabel);
       }
 
       // Action buttons
@@ -229,6 +237,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     archiveBtn.disabled = checkedCount === 0;
     deleteBtn.disabled = checkedCount === 0;
+
+    // Tag button: enabled when any checked item is cached with tags and not yet tagged
+    const checkedIds = new Set(getCheckedMessageIds());
+    const active = getActiveItems();
+    const hasTaggable = active.some(i =>
+      checkedIds.has(i.messageId) &&
+      i.cached &&
+      i.analysis?.tags?.length > 0 &&
+      !cardState[i.messageId]?.tagged
+    );
+    tagBtn.disabled = !hasTaggable;
 
     // Update select-all state
     selectAllCb.checked = checkboxes.length > 0 && checkedCount === checkboxes.length;
@@ -307,6 +326,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     browser.runtime.sendMessage({ triageAction: "delete", messageIds: ids });
   });
 
+  tagBtn.addEventListener("click", () => {
+    const ids = getCheckedMessageIds();
+    if (ids.length === 0) return;
+    const active = getActiveItems();
+    const items = ids
+      .map(id => {
+        const item = active.find(i => i.messageId === id);
+        if (!item?.cached || !item.analysis?.tags?.length) return null;
+        if (cardState[id]?.tagged) return null;
+        return { messageId: id, tags: item.analysis.tags };
+      })
+      .filter(Boolean);
+    if (items.length === 0) return;
+    browser.runtime.sendMessage({ triageAction: "tagAll", items });
+  });
+
   queueUnanalyzedBtn.addEventListener("click", () => {
     const active = getActiveItems();
     const unqueued = active
@@ -348,6 +383,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (msg.triageDeleted) {
       ensureCardState(msg.messageId);
       cardState[msg.messageId].deleted = true;
+      renderCards();
+      updateToolbarState();
+    }
+
+    if (msg.triageTagged) {
+      ensureCardState(msg.messageId);
+      cardState[msg.messageId].tagged = true;
       renderCards();
       updateToolbarState();
     }
@@ -427,6 +469,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         eventCount: Array.isArray(raw.events) ? raw.events.length : 0,
         taskCount: Array.isArray(raw.tasks) ? raw.tasks.length : 0,
         contactCount: Array.isArray(raw.contacts) ? raw.contacts.length : 0,
+        tags: Array.isArray(raw.tags) ? raw.tags : [],
         cacheTimestamp: entry.ts,
       };
       cardState[item.messageId].queued = false;

@@ -284,6 +284,10 @@
       background: #fef2f2;
       color: #dc2626;
     }
+    .card-status.status-tagged {
+      background: #f0f4ff;
+      color: #3366CC;
+    }
 
     /* ── Bottom bar ───────────────────────────────────────── */
     .bottom-bar {
@@ -432,6 +436,10 @@
         background: #301616;
         color: #f87171;
       }
+      .card-status.status-tagged {
+        background: #1e2040;
+        color: #6699ff;
+      }
 
       #done-btn { background: #0d9488; }
       #done-btn:hover { background: #0f766e; }
@@ -460,6 +468,7 @@
       <label><input type="checkbox" id="select-all" /> Select All</label>
       <span class="toolbar-spacer"></span>
       <button id="queue-unanalyzed-btn" disabled>Queue Unanalyzed</button>
+      <button id="tag-selected-btn" disabled>Tag</button>
       <button id="archive-selected-btn" disabled>Archive</button>
       <button id="delete-selected-btn" class="danger" disabled>Delete</button>
     </div>
