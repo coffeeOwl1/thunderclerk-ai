@@ -54,6 +54,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const detectedEl = document.getElementById("detected-items");
   const detectedSection = document.getElementById("detected-section");
   let hasDetected = false;
+  const foundGroups = new Set(); // track which groups have items, to hide redundant quick actions
 
   const groups = [
     { key: "events",   label: "Calendar Events" },
@@ -66,6 +67,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!Array.isArray(items) || items.length === 0) continue;
 
     hasDetected = true;
+    foundGroups.add(group.key);
     const groupDiv = document.createElement("div");
     groupDiv.className = "group";
 
@@ -111,7 +113,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     detectedEl.appendChild(groupDiv);
   }
 
-  // Tags — show cached AI tags as informational chips
+  // Tags — show cached AI tags as chips with an actionable "Tag" button
   const cachedTags = analysis._cachedTags;
   if (Array.isArray(cachedTags) && cachedTags.length > 0) {
     hasDetected = true;
@@ -123,15 +125,42 @@ document.addEventListener("DOMContentLoaded", async () => {
     groupLabel.textContent = "Tags";
     groupDiv.appendChild(groupLabel);
 
+    const row = document.createElement("div");
+    row.className = "item-row";
+
     const chipWrap = document.createElement("div");
-    chipWrap.className = "tag-chip-wrap";
+    chipWrap.className = "tag-chip-wrap item-text";
     for (const tag of cachedTags) {
       const chip = document.createElement("span");
       chip.className = "tag-chip";
       chip.textContent = tag;
       chipWrap.appendChild(chip);
     }
-    groupDiv.appendChild(chipWrap);
+    row.appendChild(chipWrap);
+
+    const btn = document.createElement("button");
+    btn.dataset.group = "quickCatalog";
+    btn.dataset.index = "0";
+    btn.dataset.btnText = "Tag";
+
+    if (analysis._tagsAlreadyApplied) {
+      btn.className = "add-btn done";
+      btn.textContent = "Tagged";
+      btn.disabled = true;
+    } else if (isFromCache) {
+      btn.className = "add-btn";
+      btn.textContent = "Tag";
+      btn.disabled = false;
+    } else {
+      btn.className = "add-btn processing";
+      btn.textContent = "Waiting\u2026";
+      btn.disabled = true;
+    }
+
+    btn.addEventListener("click", () => handleItemClick(btn, "quickCatalog", 0));
+
+    row.appendChild(btn);
+    groupDiv.appendChild(row);
     detectedEl.appendChild(groupDiv);
   }
 
@@ -197,7 +226,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       useReplyBtn.disabled = true;
       useReplyBtn.textContent = "Opening\u2026";
       await browser.runtime.sendMessage({ analyzeAction: "useReply" });
-      useReplyBtn.textContent = "Sent";
+      // Result arrives via analyzeReplyResult listener below
     });
   } else if (analysis._replyFailed) {
     const replySection = document.getElementById("reply-section");
@@ -210,16 +239,17 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // --- Render Quick Actions ---
+  // Skip quick actions whose detected-item group already appears in "What I Found"
   const quickActionsEl = document.getElementById("quick-actions");
   const quickDefs = [
-    { group: "quickCalendar", label: "Create a calendar event", btnText: "Add" },
-    { group: "quickTask",     label: "Create a task",           btnText: "Add" },
-    { group: "quickContact",  label: "Extract contact info",    btnText: "Add" },
-    { group: "quickForward",  label: "Summarize & forward",     btnText: "Forward" },
-    { group: "quickCatalog",  label: "Tag this email",          btnText: "Tag" },
+    { group: "quickCalendar", label: "Create a calendar event", btnText: "Add",     coveredBy: "events" },
+    { group: "quickTask",     label: "Create a task",           btnText: "Add",     coveredBy: "tasks" },
+    { group: "quickContact",  label: "Extract contact info",    btnText: "Add",     coveredBy: "contacts" },
+    { group: "quickForward",  label: "Summarize & forward",     btnText: "Forward", coveredBy: null },
   ];
 
   for (const def of quickDefs) {
+    if (def.coveredBy && foundGroups.has(def.coveredBy)) continue;
     const row = document.createElement("div");
     row.className = "item-row";
 
@@ -318,11 +348,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!btn) return;
 
     const btnText = btn.dataset.btnText || "Add";
-    if (msg.success) {
+    if (msg.canceled) {
+      // User closed without completing — re-enable for retry
+      btn.classList.remove("processing");
+      btn.textContent = btnText;
+      btn.disabled = false;
+      btn.title = "";
+    } else if (msg.success) {
       btn.classList.remove("processing");
       btn.classList.add("done");
       btn.textContent = "\u2713 Done";
       btn.title = "";
+      // Calendar/task dialogs can't report save vs cancel — keep clickable
+      const g = msg.group;
+      if (g === "events" || g === "tasks" || g === "quickCalendar" || g === "quickTask") {
+        btn.disabled = false;
+      }
     } else {
       btn.classList.remove("processing");
       btn.classList.add("error");
@@ -337,6 +378,20 @@ document.addEventListener("DOMContentLoaded", async () => {
           btn.title = "";
         }
       }, 4000);
+    }
+  });
+
+  // --- Listen for reply compose outcome from background ---
+  browser.runtime.onMessage.addListener((msg) => {
+    if (!msg || !msg.analyzeReplyResult) return;
+    const btn = document.getElementById("use-reply-btn");
+    if (!btn) return;
+    if (msg.sent) {
+      btn.textContent = "Sent";
+    } else {
+      // User closed compose without sending — re-enable
+      btn.disabled = false;
+      btn.textContent = "Send Reply";
     }
   });
 
@@ -359,7 +414,7 @@ async function handleItemClick(btn, group, index) {
   if (btn.disabled) return;
 
   btn.disabled = true;
-  btn.classList.remove("error");
+  btn.classList.remove("error", "done");
   btn.classList.add("processing");
   btn.textContent = "Adding\u2026";
 

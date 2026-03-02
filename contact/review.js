@@ -101,6 +101,8 @@ async function saveContact() {
     return;
   }
 
+  // Signal background that the contact was actually saved (vs just closing)
+  browser.runtime.sendMessage({ contactSaved: true }).catch(() => {});
   await browser.storage.local.remove("pendingContact");
   window.close();
 }

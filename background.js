@@ -4,6 +4,13 @@ const DEBUG = false;
 
 const DEFAULT_HOST = "http://127.0.0.1:11434";
 
+// Singleton window IDs — prevent multiple triage/analysis windows
+let triageWindowId = null;
+let analyzeWindowId = null;
+// Guards against race conditions during async window creation
+let triageOpening = false;
+let analyzeOpening = false;
+
 // DEFAULTS is defined in config.js, loaded before this script.
 
 // --- LLM parameter helpers ---
@@ -181,6 +188,7 @@ browser.storage.onChanged.addListener((changes, area) => {
 // --- Ollama connectivity status indicator (toolbar button) ---
 
 let ollamaReachable = null; // null=unknown, true=up, false=down
+let _lastIconStatus = null; // tracks last rendered status to avoid redundant setIcon calls
 const OLLAMA_CHECK_INTERVAL_MS = 30000;
 
 // Cache loaded icon ImageBitmaps so we only decode PNGs once.
@@ -236,6 +244,13 @@ async function _buildStatusIcon(color) {
 }
 
 async function updateOllamaStatusIcon(reachable) {
+  // Derive a status key: true, false, or null
+  const statusKey = reachable === true ? "up" : reachable === false ? "down" : "unknown";
+
+  // Skip redundant redraws — repeated setIcon calls can interfere with onClicked
+  if (statusKey === _lastIconStatus) return;
+  _lastIconStatus = statusKey;
+
   let color, title;
   if (reachable) {
     color = "#4CAF50";
@@ -314,8 +329,30 @@ bgOnOllamaSuccess = () => {
   }
 };
 
-browser.browserAction.onClicked.addListener(() => {
-  browser.runtime.openOptionsPage();
+browser.browserAction.onClicked.addListener(async () => {
+  console.log("[ThunderClerk-AI] Toolbar button clicked — triageWindowId:", triageWindowId, "triageOpening:", triageOpening);
+  const settings = await browser.storage.sync.get(DEFAULTS);
+  if (!settings.autoAnalyzeEnabled) {
+    console.log("[ThunderClerk-AI] Toolbar click blocked — autoAnalyzeEnabled is off");
+    notifyError("Auto Analyze disabled",
+      "Enable Auto Analyze in the extension settings to use Bulk Triage.");
+    return;
+  }
+  try {
+    const messageList = await browser.mailTabs.getSelectedMessages();
+    const messages = messageList?.messages || [];
+    if (messages.length === 0) {
+      console.log("[ThunderClerk-AI] Toolbar click — no messages selected");
+      notifyError("No messages selected",
+        "Select one or more messages in the message list first.");
+      return;
+    }
+    console.log("[ThunderClerk-AI] Toolbar click — opening triage for", messages.length, "message(s)");
+    await handleBulkTriage(messages, settings);
+  } catch (e) {
+    console.error("[ThunderClerk-AI] Toolbar click error:", e);
+    notifyError("Bulk Triage", e.message || "Could not get selected messages.");
+  }
 });
 
 initOllamaStatusMonitor();
@@ -901,6 +938,7 @@ function applyTaskSettings(parsed, message, emailBody, settings) {
 // --- Auto Analyze ---
 
 // Open a compose window with a pre-generated reply body.
+// Returns the compose tab so callers can track send vs cancel.
 async function openComposeWithReply(message, replyBody, settings) {
   const replyMode = settings.replyMode || "replyToSender";
   const composeTab = await browser.compose.beginReply(message.id, replyMode);
@@ -914,9 +952,72 @@ async function openComposeWithReply(message, replyBody, settings) {
 
   const newBody = `<p>${escapedBody}</p><br>` + (details.body || "");
   await browser.compose.setComposeDetails(composeTab.id, { body: newBody });
+  return composeTab;
+}
+
+// Track whether a compose window was sent or discarded.
+// Returns a Promise<boolean> — true if sent, false if closed without sending.
+function trackComposeOutcome(composeTab) {
+  return new Promise((resolve) => {
+    let sent = false;
+    const onAfterSend = (tab) => {
+      if (tab.id === composeTab.id) {
+        sent = true;
+        cleanup();
+        resolve(true);
+      }
+    };
+    const onRemoved = (windowId) => {
+      if (windowId === composeTab.windowId) {
+        cleanup();
+        if (!sent) resolve(false);
+      }
+    };
+    function cleanup() {
+      browser.compose.onAfterSend.removeListener(onAfterSend);
+      browser.windows.onRemoved.removeListener(onRemoved);
+    }
+    browser.compose.onAfterSend.addListener(onAfterSend);
+    browser.windows.onRemoved.addListener(onRemoved);
+  });
+}
+
+// Track whether a contact review window resulted in a save or was canceled.
+// Listens for the { contactSaved: true } message from review.js.
+// Returns a Promise<boolean> — true if saved, false if closed without saving.
+function trackContactOutcome(win) {
+  return new Promise((resolve) => {
+    let saved = false;
+    const onMessage = (msg) => {
+      if (msg && msg.contactSaved) {
+        saved = true;
+      }
+    };
+    const onRemoved = (windowId) => {
+      if (windowId === win.id) {
+        browser.windows.onRemoved.removeListener(onRemoved);
+        browser.runtime.onMessage.removeListener(onMessage);
+        resolve(saved);
+      }
+    };
+    browser.runtime.onMessage.addListener(onMessage);
+    browser.windows.onRemoved.addListener(onRemoved);
+  });
 }
 
 function openAnalyzeDialog(analysis) {
+  // Close any existing analyze window (singleton)
+  if (analyzeWindowId !== null) {
+    browser.windows.remove(analyzeWindowId).catch(() => {});
+    analyzeWindowId = null;
+  }
+
+  // Guard against race: multiple calls before the window is created
+  if (analyzeOpening) {
+    return Promise.resolve(null);
+  }
+  analyzeOpening = true;
+
   return new Promise((resolve) => {
     browser.storage.local.set({ pendingAnalysis: analysis }).then(() => {
       const listener = (msg) => {
@@ -939,15 +1040,21 @@ function openAnalyzeDialog(analysis) {
         width: 580,
         height: 760,
       }).then((win) => {
+        analyzeWindowId = win.id;
+        analyzeOpening = false;
         const onRemoved = (windowId) => {
           if (windowId === win.id) {
             browser.windows.onRemoved.removeListener(onRemoved);
             browser.runtime.onMessage.removeListener(listener);
             browser.storage.local.remove("pendingAnalysis").catch(() => {});
+            analyzeWindowId = null;
             resolve(null);
           }
         };
         browser.windows.onRemoved.addListener(onRemoved);
+      }).catch(() => {
+        analyzeOpening = false;
+        resolve(null);
       });
     });
   });
@@ -1196,6 +1303,21 @@ async function handleAutoAnalyzeCached(cached, message, emailBody, settings) {
     // Silent — dialog just won't show the unsubscribe action
   }
 
+  // Check if AI-suggested tags are already applied to the message
+  if (analysis._cachedTags?.length > 0) {
+    try {
+      const currentMsg = await browser.messages.get(message.id);
+      const allTags = await browser.messages.tags.list();
+      const currentTagKeys = new Set(currentMsg.tags || []);
+      const resolved = analysis._cachedTags
+        .map(name => allTags.find(t => t.tag.toLowerCase() === name.toLowerCase()))
+        .filter(Boolean);
+      if (resolved.length > 0 && resolved.every(t => currentTagKeys.has(t.key))) {
+        analysis._tagsAlreadyApplied = true;
+      }
+    } catch {}
+  }
+
   // Pre-build extraction cache from cached data for button clicks
   const extractionCache = {};
 
@@ -1289,34 +1411,39 @@ async function handleAutoAnalyzeCached(cached, message, emailBody, settings) {
               pendingContact: extractionCache.quickContact.data,
               contactAddressBook: settings.contactAddressBook || "",
             });
-            await browser.windows.create({
-              type: "popup",
-              url: "contact/review.html",
-              width: 420,
-              height: 520,
-            });
+            const wasSaved = await trackContactOutcome(
+              await browser.windows.create({ type: "popup", url: "contact/review.html", width: 420, height: 520 })
+            );
+            browser.runtime.sendMessage({ analyzeItemResult: true, group, index, success: true, canceled: !wasSaved }).catch(() => {});
           } else {
             await handleExtractContact(message, emailBody, settings);
+            browser.runtime.sendMessage({ analyzeItemResult: true, group, index, success: true }).catch(() => {});
           }
-          browser.runtime.sendMessage({ analyzeItemResult: true, group, index, success: true }).catch(() => {});
           return;
         }
         if (group === "quickForward") {
+          let forwardTab = null;
           if (extractionCache.quickForward?.data) {
             const summary = extractionCache.quickForward.data;
-            const composeTab = await browser.compose.beginForward(message.id, "forwardInline");
-            const details = await browser.compose.getComposeDetails(composeTab.id);
+            forwardTab = await browser.compose.beginForward(message.id, "forwardInline");
+            const details = await browser.compose.getComposeDetails(forwardTab.id);
             const escapedSummary = summary
               .replace(/&/g, "&amp;")
               .replace(/</g, "&lt;")
               .replace(/>/g, "&gt;")
               .replace(/\n/g, "<br>");
             const newBody = `<p><strong>Summary:</strong><br>${escapedSummary}</p><hr>` + (details.body || "");
-            await browser.compose.setComposeDetails(composeTab.id, { body: newBody });
+            await browser.compose.setComposeDetails(forwardTab.id, { body: newBody });
           } else {
             await handleSummarizeForward(message, emailBody, settings);
           }
-          browser.runtime.sendMessage({ analyzeItemResult: true, group, index, success: true }).catch(() => {});
+          if (forwardTab) {
+            const wasSent = await trackComposeOutcome(forwardTab);
+            browser.runtime.sendMessage({ analyzeItemResult: true, group, index, success: true, canceled: !wasSent }).catch(() => {});
+          } else {
+            // Fallback path (handleSummarizeForward) — no tab to track
+            browser.runtime.sendMessage({ analyzeItemResult: true, group, index, success: true }).catch(() => {});
+          }
           return;
         }
         if (group === "quickCatalog") {
@@ -1381,22 +1508,11 @@ async function handleAutoAnalyzeCached(cached, message, emailBody, settings) {
               pendingContact: cachedItem,
               contactAddressBook: settings.contactAddressBook || "",
             });
-            await new Promise((resolve) => {
-              browser.windows.create({
-                type: "popup",
-                url: "contact/review.html",
-                width: 420,
-                height: 520,
-              }).then((win) => {
-                const onRemoved = (windowId) => {
-                  if (windowId === win.id) {
-                    browser.windows.onRemoved.removeListener(onRemoved);
-                    resolve();
-                  }
-                };
-                browser.windows.onRemoved.addListener(onRemoved);
-              });
-            });
+            const wasSaved = await trackContactOutcome(
+              await browser.windows.create({ type: "popup", url: "contact/review.html", width: 420, height: 520 })
+            );
+            browser.runtime.sendMessage({ analyzeItemResult: true, group, index, success: true, canceled: !wasSaved }).catch(() => {});
+            return;
           }
           browser.runtime.sendMessage({ analyzeItemResult: true, group, index, success: true }).catch(() => {});
         } else {
@@ -1412,10 +1528,17 @@ async function handleAutoAnalyzeCached(cached, message, emailBody, settings) {
 
     if (msg.analyzeAction === "useReply" && replyBody) {
       try {
-        await openComposeWithReply(message, replyBody, settings);
+        const composeTab = await openComposeWithReply(message, replyBody, settings);
+        const wasSent = await trackComposeOutcome(composeTab);
+        browser.runtime.sendMessage({
+          analyzeReplyResult: true, sent: wasSent,
+        }).catch(() => {});
       } catch (e) {
         console.error("[ThunderClerk-AI] Reply compose failed:", e.message);
         notifyError("Reply error", e.message);
+        browser.runtime.sendMessage({
+          analyzeReplyResult: true, sent: false, error: e.message,
+        }).catch(() => {});
       }
       return;
     }
@@ -1434,6 +1557,21 @@ async function handleAutoAnalyzeCached(cached, message, emailBody, settings) {
 // --- Bulk Triage ---
 
 async function handleBulkTriage(messages, settings) {
+  // Singleton — focus existing triage window if one is already open
+  if (triageWindowId !== null) {
+    try {
+      await browser.windows.update(triageWindowId, { focused: true });
+      return;
+    } catch {
+      triageWindowId = null; // window no longer exists
+    }
+  }
+  // Guard against race: multiple clicks before the window is created
+  if (triageOpening) return;
+  triageOpening = true;
+
+  let triageListener = null;
+  try {
   // Gather triage data — cache lookup for each message (no Ollama calls)
   const triageItems = [];
   for (const msg of messages) {
@@ -1471,7 +1609,7 @@ async function handleBulkTriage(messages, settings) {
   // claiming the message channel (an async listener always returns a Promise,
   // which interferes with other onMessage listeners like the analyze dialog's).
   let viewInProgress = false;
-  const triageListener = (msg) => {
+  triageListener = (msg) => {
     if (!msg || !msg.triageAction) return;
 
     if (msg.triageAction === "viewAnalysis") {
@@ -1623,25 +1761,29 @@ async function handleBulkTriage(messages, settings) {
   browser.runtime.onMessage.addListener(triageListener);
 
   // Open popup and clean up on close
-  try {
-    const win = await browser.windows.create({
-      url: browser.runtime.getURL("triage/triage.html"),
-      type: "popup",
-      width: 680,
-      height: 820,
-    });
+  const win = await browser.windows.create({
+    url: browser.runtime.getURL("triage/triage.html"),
+    type: "popup",
+    width: 680,
+    height: 820,
+  });
+  triageWindowId = win.id;
+  triageOpening = false;
 
-    await new Promise((resolve) => {
-      const onRemoved = (windowId) => {
-        if (windowId === win.id) {
-          browser.windows.onRemoved.removeListener(onRemoved);
-          resolve();
-        }
-      };
-      browser.windows.onRemoved.addListener(onRemoved);
-    });
+  await new Promise((resolve) => {
+    const onRemoved = (windowId) => {
+      if (windowId === win.id) {
+        browser.windows.onRemoved.removeListener(onRemoved);
+        triageWindowId = null;
+        resolve();
+      }
+    };
+    browser.windows.onRemoved.addListener(onRemoved);
+  });
+
   } finally {
-    browser.runtime.onMessage.removeListener(triageListener);
+    triageOpening = false;
+    if (triageListener) browser.runtime.onMessage.removeListener(triageListener);
     browser.storage.local.remove(["pendingTriage", "triageSelectedCount"]).catch(() => {});
   }
 }
