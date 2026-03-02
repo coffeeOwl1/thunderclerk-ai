@@ -13,14 +13,15 @@ No cloud accounts, no API keys, no text selection required — just Thunderbird 
 - **Draft Reply** — generate a context-aware reply draft
 - **Summarize & Forward** — produce a TL;DR + bullet-point summary for forwarding
 - **Extract Contact** — pull contact info from email signatures into your address book
-- **Catalog Email** — auto-tag emails using AI, with support for existing Thunderbird tags
+- **Catalog Email** — auto-tag emails using AI, matching against your existing Thunderbird tags. Includes a one-click "Install Preset Tags" button in settings to load 16 curated, LLM-friendly tags
 - **Unsubscribe** — one-click unsubscribe via `List-Unsubscribe` header detection (Auto Analyze only, no AI needed)
-- **Bulk Triage** — select multiple emails, right-click "Bulk Triage" to see a priority-sorted summary view. Cached emails show priority badge, summary, and item counts; uncached emails can be queued for analysis. Batch Archive/Delete with checkboxes, per-card View (opens full Auto Analyze dialog) and Archive buttons. Sort by priority (default) or date.
+- **Bulk Triage** — select multiple emails, right-click "Bulk Triage" to see a priority-sorted summary view. Toggle between "Selected" (emails you highlighted) and "All Cached" (every previously analyzed email) with a smart default: selecting one email defaults to All Cached for a full overview, multiple selections default to Selected. Cached emails show priority badge, summary, and item counts; uncached emails can be queued for analysis. Batch Archive/Delete with checkboxes, per-card View (opens full Auto Analyze dialog) and Archive buttons. Sort by priority (default) or date.
 - **Auto Analyze** — one-click analysis from the message header toolbar button (next to Reply/Forward), or via `Ctrl+Shift+E`. Shows a summary, priority scoring, detected events/tasks/contacts ("What I Found") as clickable Add buttons, a suggested AI reply, and Quick Actions including one-click Unsubscribe for newsletters (detected via `List-Unsubscribe` header). Priority scoring rates each email as urgent (red badge), action-needed (orange), informational (green), or low (grey) — the toolbar badge color reflects the priority at a glance, and non-default priority levels show a label in the dialog. The toolbar badge also shows item count when cached results exist, "…" when queued for processing, "✓" when analyzed with nothing found, "!" on error. Includes background processing: incoming emails are automatically analyzed so results display instantly. Existing emails are backfilled on startup; manual actions always take priority. Archive/Delete checkboxes for post-triage cleanup. Also available via right-click context menu. Disabled by default — requires a 20B+ parameter model (see settings).
 - **Ollama Status Indicator** — toolbar button with a colored badge dot shows Ollama connectivity at a glance: green (connected), red (unreachable), orange (checking). Updates every 30 seconds and reacts instantly to processor errors. Click to open settings. Auto-resumes background processing when Ollama comes back online.
 - AI extracts title, dates, times, attendees, and (optionally) category
 - Reads the full email body — no need to select text first
 - All processing is done locally via your own Ollama instance
+- **Email metadata signals** — the AI receives structured metadata (has attachments, calendar invite, recipient count, reply thread, mailing list, auto-generated) alongside the email body, improving tag and priority accuracy without any prompt injection risk
 - Auto-tagging can run in the background after any other action
 - **Cache-first actions** — when Auto Analyze background processing has already analyzed an email, all individual actions (Add to Calendar, Add as Task, Draft Reply, Summarize & Forward, Extract Contact, Catalog Email) use cached results instantly instead of making an LLM call. Falls back to on-demand LLM when no cache exists.
 - Configurable: model, host, attendees source, default calendar, description format, categories
@@ -65,7 +66,7 @@ After installation the Settings page opens automatically. You can also reach it 
 | Draft Reply Mode | Reply to sender | Whether "Draft Reply" replies to the sender only or to all recipients |
 | Default Address Book | (first available) | Which address book to save extracted contacts to |
 | Auto-tag after actions | On | Automatically tag emails after using other actions |
-| Allow new tags | Off | Let the AI create new tags (experimental — may clutter your tag list) |
+| Install Preset Tags | (button) | One-click install of 16 curated tags for consistent AI categorization (replaces all existing tags) |
 | Context Window (tokens) | 0 (model default) | Override the model's context window size. Controls KV cache VRAM usage. |
 | Max Output Tokens | 0 (model default) | Override the maximum generation length. Thinking/reasoning models need 8192+. |
 | Enable Auto Analyze | Off | Enables one-click analysis, background processing of incoming emails, toolbar button with badge, and the keyboard shortcut. Requires a 20B+ parameter model with at least 16 GB VRAM. Smaller models produce unreliable results. |
@@ -110,7 +111,7 @@ The CalendarTools experiment API is adapted from [ThunderAI Sparks](https://micz
 
 ```bash
 npm install        # install Jest for tests
-npm test           # unit tests (~203 cases)
+npm test           # unit tests (~226 cases)
 npm run test:integration  # integration tests (needs running Ollama)
 ```
 

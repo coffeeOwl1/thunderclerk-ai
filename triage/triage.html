@@ -41,7 +41,7 @@
       color: #9ca3af;
       white-space: nowrap;
     }
-    #sort-btn {
+    .toggle-btn {
       padding: 4px 12px;
       font-size: 12px;
       font-weight: 400;
@@ -52,7 +52,7 @@
       color: #6b7280;
       transition: all 0.15s ease;
     }
-    #sort-btn:hover {
+    .toggle-btn:hover {
       background: #f0fdfa;
       border-color: #0d9488;
       color: #0d9488;
@@ -337,12 +337,12 @@
       h2 { color: #ededf4; }
       .email-count { color: #71717a; }
 
-      #sort-btn {
+      .toggle-btn {
         background: #262840;
         border-color: #3b3d5c;
         color: #d4d4dc;
       }
-      #sort-btn:hover {
+      .toggle-btn:hover {
         background: #2e3050;
         border-color: #2dd4bf;
         color: #2dd4bf;
@@ -449,7 +449,8 @@
     <h2>Bulk Triage</h2>
     <span class="title-spacer"></span>
     <span class="email-count" id="email-count"></span>
-    <button id="sort-btn">Sort: Priority</button>
+    <button id="view-btn" class="toggle-btn">View: Selected</button>
+    <button id="sort-btn" class="toggle-btn">Sort: Priority</button>
   </div>
 
   <div id="loading">Loading triage data…</div>

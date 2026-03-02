@@ -336,7 +336,6 @@ async function restoreOptions() {
   document.getElementById("taskUseCategory").checked        = !!s.taskUseCategory;
   document.getElementById("replyMode").value                = s.replyMode;
   document.getElementById("autoTagAfterAction").checked      = !!s.autoTagAfterAction;
-  document.getElementById("allowNewTags").checked            = !!s.allowNewTags;
   document.getElementById("autoAnalyzeEnabled").checked      = !!s.autoAnalyzeEnabled;
   document.getElementById("bgCacheMaxDays").value            = String(s.bgCacheMaxDays || 1);
   document.getElementById("debugPromptPreview").checked     = !!s.debugPromptPreview;
@@ -401,7 +400,6 @@ async function saveOptions() {
     replyMode:             document.getElementById("replyMode").value,
     contactAddressBook:    document.getElementById("contactAddressBook").value,
     autoTagAfterAction:    document.getElementById("autoTagAfterAction").checked,
-    allowNewTags:          document.getElementById("allowNewTags").checked,
     autoAnalyzeEnabled:    document.getElementById("autoAnalyzeEnabled").checked,
     bgCacheMaxDays:        Number(document.getElementById("bgCacheMaxDays").value) || 1,
     numCtx:                Number(document.getElementById("numCtx").value) || 0,
@@ -504,6 +502,52 @@ document.addEventListener("DOMContentLoaded", () => {
         btn.disabled = false;
       }, 2000);
     }
+  });
+
+  document.getElementById("install-preset-tags-btn").addEventListener("click", async () => {
+    const PRESET_TAGS = [
+      "Automated", "Bounce-Back", "Calendar", "Direct", "Financial",
+      "Has-Attachment", "Has-Deadline", "Inquiry", "Legal", "Logistics",
+      "Mass-Market", "Newsletter", "Recruitment", "Security-Alert",
+      "Threaded", "Travel",
+    ];
+    const COLORS = [
+      "#3366CC", "#DC3912", "#FF9900", "#109618", "#990099",
+      "#0099C6", "#DD4477", "#66AA00", "#B82E2E", "#316395",
+      "#994499", "#22AA99", "#AAAA11", "#6633CC", "#E67300", "#8B0707",
+    ];
+
+    if (!confirm("This will delete all existing Thunderbird tags and replace them with 16 preset tags.\n\nContinue?")) return;
+
+    const btn = document.getElementById("install-preset-tags-btn");
+    const status = document.getElementById("preset-tags-status");
+    btn.disabled = true;
+    status.textContent = "Installing\u2026";
+    status.style.color = "#333";
+
+    try {
+      // Delete all existing tags
+      const existing = await browser.messages.tags.list();
+      for (const tag of existing) {
+        await browser.messages.tags.delete(tag.key);
+      }
+
+      // Create preset tags with colors
+      for (let i = 0; i < PRESET_TAGS.length; i++) {
+        const name = PRESET_TAGS[i];
+        const key = "$label_tc_" + name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+        const color = COLORS[i % COLORS.length];
+        await browser.messages.tags.create(key, name, color);
+      }
+
+      status.textContent = "Installed 16 preset tags.";
+      status.style.color = "green";
+    } catch (e) {
+      console.error("[ThunderClerk-AI] Preset tag install failed:", e);
+      status.textContent = "Error: " + e.message;
+      status.style.color = "red";
+    }
+    btn.disabled = false;
   });
 
   document.getElementById("save-btn").addEventListener("click", saveOptions);

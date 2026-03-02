@@ -20,7 +20,6 @@ const DEFAULTS = {
   contactAddressBook:    "",                  // "" = first writable address book
   // Email cataloging settings
   autoTagAfterAction:    true,
-  allowNewTags:          false,
   // Auto Analyze settings (includes background processing and caching)
   autoAnalyzeEnabled:    false,
   bgCacheMaxDays:        1,

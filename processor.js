@@ -126,8 +126,9 @@ async function processNextInQueue() {
 
     // Get email body
     let emailBody = "";
+    let full = null;
     try {
-      const full = await browser.messages.getFull(item.messageId);
+      full = await browser.messages.getFull(item.messageId);
       emailBody = extractTextBody(full);
     } catch (e) {
       console.warn(BG_LOG_PREFIX, `Could not read body for message ${item.messageId}: ${e.message} — skipping`);
@@ -172,9 +173,10 @@ async function processNextInQueue() {
       existingTags = tags.map(t => t.tag);
     } catch {}
 
+    const signals = extractEmailSignals(full, message);
     const prompt = buildCombinedExtractionPrompt(
       analysisBody, subject, author, mailDatetime, currentDt,
-      attendeeHints, categories, existingTags
+      attendeeHints, categories, existingTags, signals
     );
     console.log(BG_LOG_PREFIX, `  Prompt: ${prompt.length} chars — calling ${model}…`);
 

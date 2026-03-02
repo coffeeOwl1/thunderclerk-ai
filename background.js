@@ -743,23 +743,9 @@ async function handleExtractContact(message, emailBody, settings) {
   });
 }
 
-// --- Tag color palette for newly created tags ---
-
-const TAG_COLORS = [
-  "#3366CC", "#DC3912", "#FF9900", "#109618", "#990099",
-  "#0099C6", "#DD4477", "#66AA00", "#B82E2E", "#316395",
-];
-let tagColorIndex = 0;
-
-function nextTagColor() {
-  const color = TAG_COLORS[tagColorIndex % TAG_COLORS.length];
-  tagColorIndex++;
-  return color;
-}
-
 // --- Catalog email (AI-powered tagging) ---
 
-async function catalogEmail(message, emailBody, settings) {
+async function catalogEmail(message, emailBody, settings, full) {
   // Cache-first: use cached tags if available from background processor
   try {
     const cached = await cacheGet(message.id);
@@ -768,7 +754,7 @@ async function catalogEmail(message, emailBody, settings) {
       if (Array.isArray(cachedTags) && cachedTags.length > 0) {
         // Jump straight to tag resolution with cached tags
         const existingTags = await browser.messages.tags.list();
-        return await _applyTags(message, cachedTags, existingTags, settings);
+        return await _applyTags(message, cachedTags, existingTags);
       }
       // Silent return — catalogEmail is often fire-and-forget via autoTagAfterAction
       return;
@@ -787,7 +773,8 @@ async function catalogEmail(message, emailBody, settings) {
   const existingTags = await browser.messages.tags.list();
   const existingTagNames = existingTags.map(t => t.tag);
 
-  const prompt = buildCatalogPrompt(emailBody, subject, author, existingTagNames);
+  const signals = extractEmailSignals(full, message);
+  const prompt = buildCatalogPrompt(emailBody, subject, author, existingTagNames, signals);
   const parsed = await callOllamaWithNotification(host, model, prompt, "catalog email", settings, buildOllamaOptions(settings));
 
   const aiTags = parsed.tags;
@@ -796,16 +783,15 @@ async function catalogEmail(message, emailBody, settings) {
     return;
   }
 
-  await _applyTags(message, aiTags, existingTags, settings);
+  await _applyTags(message, aiTags, existingTags);
 }
 
 // Shared tag resolution + apply logic used by both cached and LLM paths.
-async function _applyTags(message, aiTags, existingTags, settings) {
+async function _applyTags(message, aiTags, existingTags) {
   // Limit to 3 tags
   const tagNames = aiTags.slice(0, 3);
 
-  // Resolve each tag: find existing (case-insensitive) or create new
-  const allowNew = !!settings.allowNewTags;
+  // Resolve each tag: match existing (case-insensitive), skip unknown
   const tagKeys = [];
   const appliedNames = [];
   for (const name of tagNames) {
@@ -815,22 +801,6 @@ async function _applyTags(message, aiTags, existingTags, settings) {
     if (existing) {
       tagKeys.push(existing.key);
       appliedNames.push(existing.tag);
-    } else if (allowNew) {
-      // Create new tag with a rotating color
-      const key = "$label_tc_" + name.toLowerCase().replace(/[^a-z0-9]/g, "_");
-      try {
-        await browser.messages.tags.create(key, name, nextTagColor());
-        tagKeys.push(key);
-        appliedNames.push(name);
-      } catch (e) {
-        // Tag may already exist with that key (race condition)
-        console.warn("[ThunderClerk-AI] Could not create tag:", e.message);
-        const retry = existingTags.find(t => t.key === key);
-        if (retry) {
-          tagKeys.push(retry.key);
-          appliedNames.push(retry.tag);
-        }
-      }
     }
   }
 
@@ -1106,7 +1076,7 @@ function prepareCachedAnalysis(cached, message, emailBody, settings) {
   return analysis;
 }
 
-async function handleAutoAnalyze(message, emailBody, settings) {
+async function handleAutoAnalyze(message, emailBody, settings, full) {
   // --- Cache-first path: serve instantly from background processor cache ---
   try {
     const cached = await cacheGet(message.id);
@@ -1146,9 +1116,10 @@ async function handleAutoAnalyze(message, emailBody, settings) {
     existingTags = tags.map(t => t.tag);
   } catch {}
 
+  const signals = extractEmailSignals(full, message);
   const prompt = buildCombinedExtractionPrompt(
     analysisBody, subject, author, mailDatetime, currentDt,
-    attendeeHints, categories, existingTags
+    attendeeHints, categories, existingTags, signals
   );
 
   if (settings && settings.debugPromptPreview) {
@@ -1350,7 +1321,6 @@ async function handleAutoAnalyzeCached(cached, message, emailBody, settings) {
               throw new Error("The AI did not return any tags.");
             }
             const tagNames = aiTags.slice(0, 3);
-            const allowNew = !!settings.allowNewTags;
             const tagKeys = [];
             const appliedNames = [];
             for (const name of tagNames) {
@@ -1360,19 +1330,6 @@ async function handleAutoAnalyzeCached(cached, message, emailBody, settings) {
               if (existing) {
                 tagKeys.push(existing.key);
                 appliedNames.push(existing.tag);
-              } else if (allowNew) {
-                const key = "$label_tc_" + name.toLowerCase().replace(/[^a-z0-9]/g, "_");
-                try {
-                  await browser.messages.tags.create(key, name, nextTagColor());
-                  tagKeys.push(key);
-                  appliedNames.push(name);
-                } catch (e) {
-                  const retry = existingTags.find(t => t.key === key);
-                  if (retry) {
-                    tagKeys.push(retry.key);
-                    appliedNames.push(retry.tag);
-                  }
-                }
               }
             }
             if (tagKeys.length > 0) {
@@ -1499,15 +1456,21 @@ async function handleBulkTriage(messages, settings) {
   }
 
   // Store triage data and open dialog
-  await browser.storage.local.set({ pendingTriage: triageItems });
+  await browser.storage.local.set({
+    pendingTriage: triageItems,
+    triageSelectedCount: messages.length,
+  });
 
   // Non-async listener — returning undefined for non-triage messages avoids
   // claiming the message channel (an async listener always returns a Promise,
   // which interferes with other onMessage listeners like the analyze dialog's).
+  let viewInProgress = false;
   const triageListener = (msg) => {
     if (!msg || !msg.triageAction) return;
 
     if (msg.triageAction === "viewAnalysis") {
+      if (viewInProgress) return; // prevent multiple analyze windows
+      viewInProgress = true;
       (async () => {
         try {
           const message = await browser.messages.get(msg.messageId);
@@ -1521,6 +1484,7 @@ async function handleBulkTriage(messages, settings) {
         } catch (e) {
           notifyError("Error", e.message);
         }
+        viewInProgress = false;
         browser.runtime.sendMessage({ triageViewDone: true, messageId: msg.messageId }).catch(() => {});
       })();
       return;
@@ -1569,6 +1533,47 @@ async function handleBulkTriage(messages, settings) {
       browser.runtime.sendMessage({ triageQueuedAll: true, messageIds: queued }).catch(() => {});
       return;
     }
+
+    if (msg.triageAction === "getAllCached") {
+      (async () => {
+        try {
+          const index = await _getCacheIndex();
+          const allItems = [];
+          for (const [msgId, meta] of Object.entries(index.entries)) {
+            if (meta.status !== "ok") continue;
+            const id = Number(msgId);
+            let message;
+            try {
+              message = await browser.messages.get(id);
+            } catch {
+              continue; // message deleted
+            }
+            const cached = await cacheGet(id);
+            if (!cached || !cached.raw) continue;
+            const raw = cached.raw;
+            allItems.push({
+              messageId: id,
+              subject: message.subject || "(no subject)",
+              author: message.author || "",
+              date: message.date ? new Date(message.date).toISOString() : null,
+              cached: true,
+              analysis: {
+                summary: raw.summary || "",
+                priority: raw.priority || "informational",
+                eventCount: Array.isArray(raw.events) ? raw.events.length : 0,
+                taskCount: Array.isArray(raw.tasks) ? raw.tasks.length : 0,
+                contactCount: Array.isArray(raw.contacts) ? raw.contacts.length : 0,
+                cacheTimestamp: cached.ts,
+              },
+            });
+          }
+          browser.runtime.sendMessage({ triageAllCached: true, items: allItems }).catch(() => {});
+        } catch (e) {
+          browser.runtime.sendMessage({ triageAllCached: true, items: [], error: e.message }).catch(() => {});
+        }
+      })();
+      return;
+    }
   };
   browser.runtime.onMessage.addListener(triageListener);
 
@@ -1592,7 +1597,7 @@ async function handleBulkTriage(messages, settings) {
     });
   } finally {
     browser.runtime.onMessage.removeListener(triageListener);
-    browser.storage.local.remove("pendingTriage").catch(() => {});
+    browser.storage.local.remove(["pendingTriage", "triageSelectedCount"]).catch(() => {});
   }
 }
 
@@ -1655,8 +1660,9 @@ browser.menus.onClicked.addListener(async (info, tab) => {
 
   // Get full message body
   let emailBody = "";
+  let full = null;
   try {
-    const full = await browser.messages.getFull(message.id);
+    full = await browser.messages.getFull(message.id);
     emailBody = extractTextBody(full);
     if (!emailBody) {
       notifyError("Empty body", "Could not extract plain text from this message.");
@@ -1687,18 +1693,18 @@ browser.menus.onClicked.addListener(async (info, tab) => {
     } else if (info.menuItemId === "thunderclerk-ai-extract-contact") {
       await handleExtractContact(message, emailBody, settings);
     } else if (isCatalog) {
-      await catalogEmail(message, emailBody, settings);
+      await catalogEmail(message, emailBody, settings, full);
     } else if (isAutoAnalyze) {
       if (!settings.autoAnalyzeEnabled) {
         notifyError("Auto Analyze disabled", "Enable Auto Analyze in the extension settings to use this feature.");
         return;
       }
-      await handleAutoAnalyze(message, emailBody, settings);
+      await handleAutoAnalyze(message, emailBody, settings, full);
     }
 
     // Auto-tag after any non-catalog, non-analyze action (fire-and-forget)
     if (!isCatalog && !isAutoAnalyze && settings.autoTagAfterAction) {
-      catalogEmail(message, emailBody, settings).catch(e =>
+      catalogEmail(message, emailBody, settings, full).catch(e =>
         console.warn("[ThunderClerk-AI] Auto-tag failed:", e.message)
       );
     }
@@ -1739,8 +1745,9 @@ browser.messageDisplayAction.onClicked.addListener(async (tab) => {
   const settings = await browser.storage.sync.get(DEFAULTS);
 
   let emailBody = "";
+  let full = null;
   try {
-    const full = await browser.messages.getFull(message.id);
+    full = await browser.messages.getFull(message.id);
     emailBody = extractTextBody(full);
     if (!emailBody) {
       notifyError("Empty body", "Could not extract plain text from this message.");
@@ -1752,7 +1759,7 @@ browser.messageDisplayAction.onClicked.addListener(async (tab) => {
   }
 
   try {
-    await handleAutoAnalyze(message, emailBody, settings);
+    await handleAutoAnalyze(message, emailBody, settings, full);
   } catch (e) {
     if (e.message?.includes("invalid JSON") || e.message?.includes("No JSON object") || e.message?.includes("Unclosed JSON")) {
       console.error("[ThunderClerk-AI] JSON parse failed:", e.message);
